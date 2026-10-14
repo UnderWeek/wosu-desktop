@@ -121,9 +121,15 @@ export class Game {
         const skins = new SkinManager();
         const [, , cursorTextures] = await Promise.all([loadFonts(), skin.load(), Cursor.loadTextures(), skins.loadDefault()]);
         installBitmapFonts(app.renderer.resolution);
-        loading.destroy();
         const game = new Game(app, settings, skin, skins, cursorTextures);
-        await game.start();
+        // Keep the spinner (and no toolbar) until the library is read and the first screen is up.
+        app.toolbarLayer.visible = false;
+        try {
+            await game.start();
+        } finally {
+            app.toolbarLayer.visible = true;
+            loading.destroy();
+        }
         return game;
     }
 
