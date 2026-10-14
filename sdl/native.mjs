@@ -6,10 +6,28 @@
  */
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+
+/**
+ * The few Electron APIs the shared modules touch (inbox.cjs: shell),
+ * done with macOS tools so those modules run unchanged here.
+ */
+const Module = require('node:module');
+const fakeElectron = {
+    shell: {
+        trashItem: p => new Promise((resolve, reject) => execFile('/usr/bin/osascript', ['-e', `tell application "Finder" to delete (POSIX file ${JSON.stringify(p)} as alias)`], e => (e ? reject(e) : resolve()))),
+        openPath: async p => { execFile('/usr/bin/open', [p]); return ''; },
+        showItemInFolder: p => execFile('/usr/bin/open', ['-R', p]),
+    },
+};
+const origLoad = Module._load;
+Module._load = function (request, ...rest) {
+    return request === 'electron' ? fakeElectron : origLoad.call(this, request, ...rest);
+};
 const EL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'electron');
 
 /** The modules register IPC handlers; collect them and call them directly. */
@@ -25,6 +43,21 @@ const lazerWrite = require(path.join(EL, 'lazer-write.cjs'));
 storage.registerIpc(fakeIpc);
 lazer.registerIpc(fakeIpc);
 lazerWrite.registerIpc(fakeIpc);
+const inbox = require(path.join(EL, 'inbox.cjs'));
+inbox.registerIpc(fakeIpc);
+/** inbox.cjs notifies a window's webContents; collect those notifications instead. */
+const inboxListeners = new Set();
+inbox.attach({
+    isDestroyed: () => false,
+    webContents: {
+        send: (ch, payload) => {
+            if (ch === 'wosu:inbox-changed') for (const fn of inboxListeners) fn();
+            if (ch === 'wosu:open-file') for (const fn of openFileHook) fn(payload);
+        },
+        on: () => {},
+    },
+});
+const openFileHook = new Set();
 
 const call = ch => async (...args) => {
     const fn = handlers.get(ch);
@@ -33,9 +66,28 @@ const call = ch => async (...args) => {
 };
 const noopListen = () => () => {};
 
+/** Where the game's "downloads" go, as in electron/system.cjs. */
+function saveDirFor(name) {
+    if (/\.(png|jpe?g)$/i.test(name)) return 'Screenshots';
+    if (/\.osr$/i.test(name)) return 'Replays';
+    return 'Exports';
+}
+
 export function createNative({ onConfigChange } = {}) {
     const openFileListeners = new Set();
+    const savedListeners = new Set();
     return {
+        /** Host side: a file the game offered for download (screenshot, replay, export). */
+        saveDownload(name, bytes) {
+            const folder = saveDirFor(name);
+            const dir = path.join(storage.DATA_DIR, folder);
+            fs.mkdirSync(dir, { recursive: true });
+            const ext = path.extname(name), base = name.slice(0, name.length - ext.length);
+            let file = path.join(dir, name);
+            for (let i = 2; fs.existsSync(file); i++) file = path.join(dir, `${base} (${i})${ext}`);
+            fs.writeFileSync(file, bytes);
+            for (const fn of savedListeners) fn({ path: file, folder });
+        },
         /** Host side: hand a dropped/opened file to the game (it imports or watches it). */
         openFile(f) {
             for (const fn of openFileListeners) fn(f);
@@ -47,7 +99,15 @@ export function createNative({ onConfigChange } = {}) {
             entries: call('wosu:db:entries'), keys: call('wosu:db:keys'), clear: call('wosu:db:clear'), count: call('wosu:db:count'),
         },
         // Folder import (~/.wosu/Songs, Skins) needs Electron's trash; not wired here yet.
-        inbox: { list: async () => [], read: async () => new Uint8Array(), done: async () => {}, onChanged: noopListen },
+        inbox: {
+            list: call('wosu:inbox:list'),
+            read: call('wosu:inbox:read'),
+            done: call('wosu:inbox:done'),
+            onChanged: fn => {
+                inboxListeners.add(fn);
+                return () => inboxListeners.delete(fn);
+            },
+        },
         update: { check: async () => ({ current: 'sdl', available: false, error: 'Updates are not available in the SDL build' }), install: async () => {}, onProgress: noopListen },
         openDataDir: async () => { execFile('/usr/bin/open', [storage.DATA_DIR]); return ''; },
         config: {
@@ -61,7 +121,10 @@ export function createNative({ onConfigChange } = {}) {
         },
         relaunch: async () => process.exit(0),
         onMenu: noopListen,
-        onFileSaved: noopListen,
+        onFileSaved: fn => {
+            savedListeners.add(fn);
+            return () => savedListeners.delete(fn);
+        },
         onOpenFile: fn => {
             openFileListeners.add(fn);
             return () => openFileListeners.delete(fn);

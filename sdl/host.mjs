@@ -12,6 +12,7 @@
  */
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { resolveObjectURL } from 'node:buffer';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import sdl from '@kmamal/sdl';
@@ -497,6 +498,7 @@ Object.defineProperty(doc, 'fonts', { value: { add: f => fontSet.add(f), delete:
 // ---------------------------------------------------------------------------
 
 const nodeFetch = globalThis.fetch.bind(globalThis);
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 wosu-sdl';
 const MIME = { '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.ttf': 'font/ttf', '.fnt': 'text/plain', '.woff2': 'font/woff2', '.ini': 'text/plain' };
 g.fetch = async (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input.url ?? String(input), ORIGIN);
@@ -518,7 +520,10 @@ g.fetch = async (input, init) => {
         }
     }
     if (url.protocol === 'blob:') return nodeFetch(input, init);
-    return nodeFetch(url, init);
+    // Some mirrors (catboy.best) turn away Node's default user agent with a 403.
+    const headers = new Headers(init?.headers ?? (typeof input === 'object' ? input.headers : undefined));
+    if (!headers.has('user-agent')) headers.set('user-agent', BROWSER_UA);
+    return nodeFetch(url, { ...init, headers });
 };
 
 // ---------------------------------------------------------------------------
@@ -703,9 +708,32 @@ win.on('resize', () => {
     renderer?.resize();
     hw.dispatchEvent(new hw.Event('resize'));
 });
+// Focus: the game pauses on blur and drops to 30 fps in the background (see desktop.ts).
+let focused = true;
+doc.hasFocus = () => focused;
+Object.defineProperty(doc, 'visibilityState', { get: () => (win.visible === false ? 'hidden' : 'visible'), configurable: true });
+win.on('focus', () => {
+    focused = true;
+    hw.dispatchEvent(new hw.Event('focus'));
+});
+win.on('blur', () => {
+    focused = false;
+    hw.dispatchEvent(new hw.Event('blur'));
+});
 win.on('close', () => process.exit(0));
 // Exit normally on signals too (so --cpu-prof writes its profile).
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(0));
+
+// <a download> clicks (screenshots, replays, skin exports): saved under ~/.wosu like the Electron app does.
+const anchorClick = hw.HTMLAnchorElement.prototype.click;
+hw.HTMLAnchorElement.prototype.click = function () {
+    const name = this.getAttribute('download');
+    const href = this.getAttribute('href') ?? '';
+    if (name === null || !href.startsWith('blob:')) return anchorClick.call(this);
+    const blob = resolveObjectURL(href);
+    if (!blob) return;
+    void blob.arrayBuffer().then(buf => g.wosuNative?.saveDownload(name || 'download', new Uint8Array(buf))).catch(e => console.warn('[sdl] save failed', e));
+};
 
 // The desktop bridge (~/.wosu storage, osu!lazer), as the Electron preload gives it.
 g.wosuNative = createNative({ onConfigChange: c => applyDisplayMode(c.displayMode) });
