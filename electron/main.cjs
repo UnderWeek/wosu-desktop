@@ -23,6 +23,7 @@ const menu = require('./menu.cjs');
 const system = require('./system.cjs');
 const lazer = require('./lazer.cjs');
 const lazerWrite = require('./lazer-write.cjs');
+const prefs = require('./prefs.cjs');
 
 logs.captureMain();
 
@@ -260,6 +261,7 @@ if (!gotLock) {
         system.registerIpc(ipcMain);
         lazer.registerIpc(ipcMain);
         lazerWrite.registerIpc(ipcMain);
+        prefs.registerIpc(ipcMain);
         system.routeDownloads(session.defaultSession);
         menu.build(action => win?.webContents.send('wosu:menu', action));
         ipcMain.handle('wosu:open-data-dir', () => shell.openPath(DATA_DIR));
@@ -271,4 +273,5 @@ if (!gotLock) {
     });
 
     app.on('window-all-closed', () => app.quit());
+    app.on('before-quit', () => prefs.flush());
 }

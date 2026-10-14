@@ -44,6 +44,12 @@ contextBridge.exposeInMainWorld('wosuNative', {
         onChanged: listen('wosu:config-changed'),
     },
     relaunch: invoke('wosu:relaunch'),
+    localStore: {
+        snapshot: () => ipcRenderer.sendSync('wosu:ls:snapshot'),
+        set: (k, v) => ipcRenderer.send('wosu:ls:set', k, v),
+        remove: k => ipcRenderer.send('wosu:ls:remove', k),
+        replaceAll: all => ipcRenderer.send('wosu:ls:replaceAll', all),
+    },
     onMenu: listen('wosu:menu'),
     lazer: {
         library: invoke('wosu:lazer:library'),

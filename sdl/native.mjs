@@ -5,7 +5,7 @@
  * updater) are no-ops here.
  */
 import { createRequire } from 'node:module';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,6 +40,7 @@ const storage = require(path.join(EL, 'storage.cjs'));
 const config = require(path.join(EL, 'config.cjs'));
 const lazer = require(path.join(EL, 'lazer.cjs'));
 const lazerWrite = require(path.join(EL, 'lazer-write.cjs'));
+const prefs = require(path.join(EL, 'prefs.cjs'));
 storage.registerIpc(fakeIpc);
 lazer.registerIpc(fakeIpc);
 lazerWrite.registerIpc(fakeIpc);
@@ -119,7 +120,13 @@ export function createNative({ onConfigChange } = {}) {
             },
             onChanged: noopListen,
         },
-        relaunch: async () => process.exit(0),
+        relaunch: async () => relaunch(),
+        localStore: {
+            snapshot: () => prefs.snapshot(),
+            set: (k, v) => prefs.set(k, v),
+            remove: k => prefs.remove(k),
+            replaceAll: all => prefs.replaceAll(all),
+        },
         onMenu: noopListen,
         onFileSaved: fn => {
             savedListeners.add(fn);
@@ -140,4 +147,11 @@ export function createNative({ onConfigChange } = {}) {
             deleteCollection: call('wosu:lazer:deleteCollection'), delete: call('wosu:lazer:delete'),
         },
     };
+}
+
+/** Start a fresh host (same command and environment) and exit this one. */
+export function relaunch() {
+    prefs.flush();
+    spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() }).unref();
+    process.exit(0);
 }

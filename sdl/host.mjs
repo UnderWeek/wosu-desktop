@@ -20,7 +20,7 @@ import gpu from '@kmamal/gpu';
 import { Window as HappyWindow } from 'happy-dom';
 import { createCanvas, GlobalFonts, loadImage } from '@napi-rs/canvas';
 import * as webAudio from 'node-web-audio-api';
-import { createNative } from './native.mjs';
+import { createNative, relaunch } from './native.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '..', 'dist');
@@ -783,6 +783,13 @@ hw.HTMLAnchorElement.prototype.click = function () {
     if (!blob) return;
     void blob.arrayBuffer().then(buf => g.wosuNative?.saveDownload(name || 'download', new Uint8Array(buf))).catch(e => console.warn('[sdl] save failed', e));
 };
+
+// location.reload() ("Restart now" after renderer/MSAA changes): a real restart of the host.
+try {
+    Object.defineProperty(hw.location, 'reload', { value: () => relaunch(), configurable: true });
+} catch {
+    hw.location.reload = () => relaunch();
+}
 
 // The desktop bridge (~/.wosu storage, osu!lazer), as the Electron preload gives it.
 g.wosuNative = createNative({ onConfigChange: c => applyDisplayMode(c.displayMode) });

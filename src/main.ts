@@ -5,12 +5,15 @@ import { installInputDebug } from './debug/InputDebug';
 import { showDevBadge } from './native/DevBadge';
 import { isDesktop } from './native/desktop';
 import { native } from './native/native';
+import { installFileLocalStorage } from './native/localStore';
 
 /**
  * Entry point: the whole game (menus included) is one PixiJS application
  * rendered into #app. See src/app/Game.ts for the service wiring.
  */
 async function main(): Promise<void> {
+    // Desktop: settings live in ~/.wosu/localstorage.json (shared by the Electron and SDL builds).
+    installFileLocalStorage(native);
     // Vercel Web Analytics (page views only; a no-op in development).
     // (not in the desktop app, which has no Vercel endpoint).
     if (!isDesktop) inject();

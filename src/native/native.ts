@@ -110,6 +110,13 @@ export interface WosuNative {
     };
     /** Restart the whole app (Chromium switches such as vsync apply only at launch). */
     relaunch(): Promise<void>;
+    /** ~/.wosu/localstorage.json: the game's localStorage, shared by the Electron and SDL builds. */
+    localStore?: {
+        snapshot(): { exists: boolean; data: Record<string, string> };
+        set(key: string, value: string): void;
+        remove(key: string): void;
+        replaceAll(all: Record<string, string>): void;
+    };
     /** Read-only osu!lazer library (electron/lazer.cjs). */
     lazer: {
         library(): Promise<LazerLibraryData>;
