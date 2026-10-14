@@ -512,6 +512,24 @@ if (fontDesc?.set) {
             fontDesc.set.call(this, s.includes('Apple Symbols') ? s : s + FALLBACK_FONTS);
         },
     });
+    // Line metrics (fontBoundingBox*) must stay the primary font's, as in Chrome: Pixi sizes text
+    // by them, and with the fallbacks listed Skia took them from whichever font drew "|ÉqÅM"
+    // (Apple Symbols for an icon font) — icons lost their tops.
+    const measureText = proto2d.measureText;
+    proto2d.measureText = function (text) {
+        const m = measureText.call(this, text);
+        const full = fontDesc.get.call(this);
+        if (!full.endsWith(FALLBACK_FONTS)) return m;
+        fontDesc.set.call(this, full.slice(0, -FALLBACK_FONTS.length));
+        const primary = measureText.call(this, text);
+        fontDesc.set.call(this, full);
+        const out = {};
+        for (const k of ['width', 'actualBoundingBoxLeft', 'actualBoundingBoxRight', 'actualBoundingBoxAscent', 'actualBoundingBoxDescent',
+            'fontBoundingBoxAscent', 'fontBoundingBoxDescent', 'emHeightAscent', 'emHeightDescent', 'hangingBaseline', 'alphabeticBaseline', 'ideographicBaseline']) out[k] = m[k];
+        out.fontBoundingBoxAscent = primary.fontBoundingBoxAscent;
+        out.fontBoundingBoxDescent = primary.fontBoundingBoxDescent;
+        return out;
+    };
 }
 const drawImage = proto2d.drawImage;
 proto2d.drawImage = function (src, ...a) {
