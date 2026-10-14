@@ -179,8 +179,11 @@ export class App {
         const auto = Math.min(1, Math.max(0.6, Math.min(vw / 1100, vh / 640)));
         this.uiScale = auto * this.userUiScale;
         this.root.scale.set(this.uiScale);
-        this.width = vw / this.uiScale;
-        this.height = vh / this.uiScale;
+        // Pixi rounds the canvas to whole pixels (1470 × 0.75 → 1103 px = 1470.67 points), so lay
+        // out over what the canvas really shows; otherwise backgrounds peek out at the right/bottom edge.
+        const canvas = this.renderer.canvas;
+        this.width = (canvas.width / res) / this.uiScale;
+        this.height = (canvas.height / res) / this.uiScale;
         this.resized.emit(this.width, this.height);
     }
 
