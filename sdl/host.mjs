@@ -102,6 +102,8 @@ function patchQueue(device) {
     const h = Array.isArray(size) ? size[1] : size.height;
     let data = px.data;
     if (destination.premultipliedAlpha) data = premultiply(data);
+    // copyExternalImageToTexture converts to the texture's format; writeTexture writes bytes as they are.
+    if (String(destination.texture.format).startsWith('bgra')) data = swapRB(data);
     device.queue.writeTexture(
         { texture: destination.texture, mipLevel: destination.mipLevel ?? 0, origin: destination.origin ?? [0, 0, 0] },
         data,
@@ -109,6 +111,18 @@ function patchQueue(device) {
         [w, h, 1],
     );
     };
+}
+
+/** RGBA → BGRA (or back). */
+function swapRB(src) {
+    const out = new Uint8Array(src.length);
+    for (let i = 0; i < src.length; i += 4) {
+        out[i] = src[i + 2];
+        out[i + 1] = src[i + 1];
+        out[i + 2] = src[i];
+        out[i + 3] = src[i + 3];
+    }
+    return out;
 }
 
 function premultiply(src) {
