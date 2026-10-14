@@ -596,6 +596,22 @@ g.requestAnimationFrame = cb => {
 g.cancelAnimationFrame = id => rafQueue.delete(id);
 
 /**
+ * The window surface must match the window's pixel size. SDL's resize event
+ * can report the new size a moment before pixelWidth/Height settle (e.g.
+ * entering fullscreen), leaving a strip of stale layer content at an edge:
+ * check every frame and recreate the surface when they differ.
+ */
+let surfaceSize = '';
+function syncSurfaceSize() {
+    if (!renderer) return;
+    const size = `${win.pixelWidth}x${win.pixelHeight}`;
+    if (size === surfaceSize) return;
+    if (surfaceSize) renderer.resize();
+    surfaceSize = size;
+    if (mainContext) mainContext.badgeRectFor = null;
+}
+
+/**
  * The game hides the OS cursor while it draws its own, with a class on <html>
  * and a "cursor: none" rule (src/app/Cursor.ts): mirror that in SDL.
  */
@@ -624,6 +640,7 @@ function frame() {
     }
     // Pixi submitted this frame's work into renderer.getCurrentTexture(): show it.
     syncCursor();
+    syncSurfaceSize();
     const drew = textureTaken && renderer;
     if (drew) {
         mainContext.present();
