@@ -18,6 +18,7 @@ import gpu from '@kmamal/gpu';
 import { Window as HappyWindow } from 'happy-dom';
 import { createCanvas, GlobalFonts, loadImage } from '@napi-rs/canvas';
 import * as webAudio from 'node-web-audio-api';
+import { createNative } from './native.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '..', 'dist');
@@ -192,20 +193,49 @@ g.webkitAudioContext = g.AudioContext;
 let mainContext = null;
 /** Only present frames the game actually drew into (Dawn rejects presenting an untouched surface). */
 let textureTaken = false;
-let frameTexture = null;
-const GPU_RENDER_ATTACHMENT = gpu.GPUTextureUsage.RENDER_ATTACHMENT;
+const SURFACE_FORMAT = 'bgra8unorm';
+
+/**
+ * The game's 'webgpu' canvas. Pixi renders into a real texture the size of
+ * the canvas (logical size × the game's resolution: 1× unless Retina is on);
+ * at the end of each frame the host draws it scaled onto the window surface.
+ * That keeps the game's resolution independent of the window's pixel density
+ * and avoids renderer.getCurrentTexture(), which over-releases the device.
+ */
+const BLIT_WGSL = `
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+struct V { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> V {
+    var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+    var o: V;
+    o.pos = vec4f(p[i], 0.0, 1.0);
+    o.uv = vec2f((p[i].x + 1.0) * 0.5, (1.0 - p[i].y) * 0.5);
+    return o;
+}
+@fragment fn fs(v: V) -> @location(0) vec4f { return textureSample(src, smp, v.uv); }`;
 
 class GPUCanvasContextShim {
     constructor(canvas) {
         this.canvas = canvas;
+        this.texture = null;
+        this.bindGroup = null;
     }
     configure(cfg) {
         this.cfg = cfg;
-        // Present the game's device into the SDL window.
-        if (!renderer || this.device !== cfg.device) {
+        if (this.device !== cfg.device) {
             this.device = cfg.device;
             patchQueue(cfg.device);
             renderer = gpu.renderGPUDeviceToWindow({ device: cfg.device, window: win, presentMode: PRESENT });
+            const module = cfg.device.createShaderModule({ code: BLIT_WGSL });
+            this.pipeline = cfg.device.createRenderPipeline({
+                layout: 'auto',
+                vertex: { module, entryPoint: 'vs' },
+                fragment: { module, entryPoint: 'fs', targets: [{ format: SURFACE_FORMAT }] },
+                primitive: { topology: 'triangle-list' },
+            });
+            this.sampler = cfg.device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+            this.texture = null;
         }
     }
     unconfigure() {}
@@ -213,29 +243,36 @@ class GPUCanvasContextShim {
         return this.cfg ?? null;
     }
     getCurrentTexture() {
-        // Not renderer.getCurrentTexture(): its native side "acquires" the device it only
-        // borrowed, so every texture object collected releases the device once more and the
-        // refcount runs out within seconds (Dawn assert in RefCounted::Decrement).
-        // getCurrentTextureView() owns its references properly: hand Pixi a texture whose
-        // views are that one view, taken once per frame.
-        if (!frameTexture) {
-            const view = renderer.getCurrentTextureView();
-            frameTexture = {
-                label: 'sdl window',
-                width: win.pixelWidth,
-                height: win.pixelHeight,
-                depthOrArrayLayers: 1,
-                mipLevelCount: 1,
-                sampleCount: 1,
-                dimension: '2d',
-                format: this.cfg?.format ?? 'bgra8unorm',
-                usage: GPU_RENDER_ATTACHMENT,
-                createView: () => view,
-                destroy() {},
-            };
+        const w = Math.max(1, this.canvas.width), h = Math.max(1, this.canvas.height);
+        if (!this.texture || this.texture.width !== w || this.texture.height !== h) {
+            this.texture?.destroy();
+            this.texture = this.device.createTexture({
+                label: 'canvas',
+                size: [w, h, 1],
+                format: this.cfg.format,
+                usage: gpu.GPUTextureUsage.RENDER_ATTACHMENT | gpu.GPUTextureUsage.TEXTURE_BINDING | gpu.GPUTextureUsage.COPY_SRC | gpu.GPUTextureUsage.COPY_DST,
+            });
+            this.bindGroup = this.device.createBindGroup({
+                layout: this.pipeline.getBindGroupLayout(0),
+                entries: [{ binding: 0, resource: this.texture.createView() }, { binding: 1, resource: this.sampler }],
+            });
         }
         textureTaken = true;
-        return frameTexture;
+        return this.texture;
+    }
+    /** Draw this frame's canvas onto the window and show it. */
+    present() {
+        if (!this.texture) return;
+        const enc = this.device.createCommandEncoder();
+        const pass = enc.beginRenderPass({
+            colorAttachments: [{ view: renderer.getCurrentTextureView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }],
+        });
+        pass.setPipeline(this.pipeline);
+        pass.setBindGroup(0, this.bindGroup);
+        pass.draw(3);
+        pass.end();
+        this.device.queue.submit([enc.finish()]);
+        renderer.swap();
     }
 }
 
@@ -406,10 +443,9 @@ function frame() {
     // Pixi submitted this frame's work into renderer.getCurrentTexture(): show it.
     const drew = textureTaken && renderer;
     if (drew) {
-        renderer.swap();
+        mainContext.present();
         textureTaken = false;
     }
-    frameTexture = null;
     const d = performance.now() - t;
     if (drew) {
         stats.frames++;
@@ -499,13 +535,8 @@ win.on('close', () => process.exit(0));
 // Exit normally on signals too (so --cpu-prof writes its profile).
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(0));
 
-// MSAA makes Pixi copy the window texture (copyTextureToTexture), which needs a real
-// GPUTexture: see getCurrentTexture above. Start with it off (the player keeps it off anyway).
-try {
-    const KEY = 'webosu.settings.v2';
-    const saved = JSON.parse(hw.localStorage.getItem(KEY) || '{}');
-    if (saved.antialias === undefined) hw.localStorage.setItem(KEY, JSON.stringify({ ...saved, antialias: false }));
-} catch { /* defaults */ }
+// The desktop bridge (~/.wosu storage, osu!lazer), as the Electron preload gives it.
+g.wosuNative = createNative();
 
 // ---------------------------------------------------------------------------
 // Boot the built game

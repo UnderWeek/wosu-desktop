@@ -253,6 +253,7 @@ if (!gotLock) {
 
     app.whenReady().then(() => {
         storage.registerIpc(ipcMain);
+        void storage.migrateLegacy();
         inbox.registerIpc(ipcMain);
         updater.registerIpc(ipcMain);
         registerConfigIpc();

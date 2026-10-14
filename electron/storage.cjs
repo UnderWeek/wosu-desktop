@@ -6,7 +6,8 @@
  *   webosu/blobs      -> Songs/<key>.osz        (beatmap archives)
  *   wosu-skins/files  -> Skins/<id>.osk         (skin archives)
  *   webosu/thumbs     -> cache/thumbs/<key>.jpg
- *   anything else     -> data/<db>/<store>/<key>.bin (v8-serialized values)
+ *   anything else     -> data/<db>/<store>/<key>.json (portable JSON, see encodeValue;
+ *                        older <key>.bin files are V8-serialized and are read too)
  *
  * Values cross IPC as a "wire" value: { t: 'blob', type, bytes } for
  * Blobs (IPC cannot carry Blob) or { t: 'v', v } for anything else.
@@ -36,7 +37,7 @@ function safeName(s) {
 function storeOf(db, store) {
     const raw = RAW[`${db}/${store}`];
     if (raw) return { raw: true, ...raw };
-    return { raw: false, dir: path.join(DATA_DIR, 'data', safeName(db), safeName(store)), ext: '.bin' };
+    return { raw: false, dir: path.join(DATA_DIR, 'data', safeName(db), safeName(store)), ext: '.json' };
 }
 
 // Keys: numbers and strings stay distinct (like IndexedDB).
@@ -71,11 +72,48 @@ async function listKeys(s) {
     } catch {
         return [];
     }
-    return names
-        .filter(n => n.endsWith(s.ext) && !n.startsWith('.'))
-        .map(n => decodeKey(n.slice(0, -s.ext.length)))
-        .filter(k => s.raw ? isOwnedRawKey(s, k) : true)
-        .sort(compareKeys);
+    const exts = s.raw ? [s.ext] : [s.ext, LEGACY_EXT];
+    const keys = new Map();
+    for (const n of names) {
+        if (n.startsWith('.')) continue;
+        const ext = exts.find(e => n.endsWith(e));
+        if (!ext) continue;
+        const k = decodeKey(n.slice(0, -ext.length));
+        keys.set(typeof k + ':' + k, k);
+    }
+    return [...keys.values()].filter(k => s.raw ? isOwnedRawKey(s, k) : true).sort(compareKeys);
+}
+
+/**
+ * Data files are JSON so every runtime reads them: V8's serialization
+ * format differs between Electron and plain Node (the SDL build), and a
+ * file one wrote was unreadable by the other. Bytes become base64.
+ */
+const LEGACY_EXT = '.bin';
+
+function encodeValue(wire) {
+    return JSON.stringify(wire, function (key, value) {
+        const raw = this[key];
+        if (raw instanceof Uint8Array) return { $u8: Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength).toString('base64') };
+        if (raw instanceof Date) return { $date: raw.getTime() };
+        if (raw instanceof Map) return { $map: [...raw.entries()] };
+        if (raw instanceof Set) return { $set: [...raw.values()] };
+        if (typeof raw === 'number' && !Number.isFinite(raw)) return { $num: String(raw) };
+        return value;
+    });
+}
+
+function decodeValue(text) {
+    return JSON.parse(text, (_k, v) => {
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            if (typeof v.$u8 === 'string') return new Uint8Array(Buffer.from(v.$u8, 'base64'));
+            if (typeof v.$date === 'number') return new Date(v.$date);
+            if (Array.isArray(v.$map)) return new Map(v.$map);
+            if (Array.isArray(v.$set)) return new Set(v.$set);
+            if (typeof v.$num === 'string') return Number(v.$num);
+        }
+        return v;
+    });
 }
 
 /**
@@ -93,11 +131,19 @@ async function readWire(s, file) {
     try {
         buf = await fsp.readFile(file);
     } catch (e) {
-        if (e.code === 'ENOENT') return undefined;
-        throw e;
+        if (e.code !== 'ENOENT') throw e;
+        if (s.raw) return undefined;
+        // Not converted yet: the V8-serialized file this store used to write.
+        const legacy = file.slice(0, -s.ext.length) + LEGACY_EXT;
+        try {
+            return v8.deserialize(await fsp.readFile(legacy));
+        } catch (e2) {
+            if (e2.code !== 'ENOENT') console.warn(`[storage] ${path.basename(legacy)} is from another runtime and can't be read here yet`);
+            return undefined;
+        }
     }
     if (s.raw) return { t: 'blob', type: s.type, bytes: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) };
-    return v8.deserialize(buf);
+    return decodeValue(buf.toString('utf8'));
 }
 
 /** Write via a temp file + rename so a crash never leaves half a file. */
@@ -163,16 +209,22 @@ const api = {
             if (wire.t !== 'blob') throw new Error(`store ${store}: expected a Blob`);
             data = wire.bytes;
         } else {
-            data = v8.serialize(wire);
+            data = encodeValue(wire);
         }
-        await withLock(file, () => writeAtomic(file, data));
+        await withLock(file, async () => {
+            await writeAtomic(file, data);
+            if (!s.raw) await fsp.rm(file.slice(0, -s.ext.length) + LEGACY_EXT, { force: true });
+        });
         return key;
     },
 
     async delete(db, store, key) {
         const s = storeOf(db, store);
         const file = fileFor(s, key);
-        await withLock(file, () => fsp.rm(file, { force: true }));
+        await withLock(file, async () => {
+            await fsp.rm(file, { force: true });
+            if (!s.raw) await fsp.rm(file.slice(0, -s.ext.length) + LEGACY_EXT, { force: true });
+        });
     },
 
     async entries(db, store) {
@@ -203,6 +255,41 @@ const api = {
     },
 };
 
+/**
+ * Convert .bin (V8) data files to .json, in the background. Only the
+ * runtime that wrote them can read them, so the Electron app does this;
+ * files another runtime can't read are left for it.
+ */
+async function migrateLegacy() {
+    const root = path.join(DATA_DIR, 'data');
+    let converted = 0;
+    const walk = async dir => {
+        let ents;
+        try {
+            ents = await fsp.readdir(dir, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const ent of ents) {
+            const full = path.join(dir, ent.name);
+            if (ent.isDirectory()) await walk(full);
+            else if (ent.name.endsWith(LEGACY_EXT) && !ent.name.startsWith('.')) {
+                try {
+                    const value = v8.deserialize(await fsp.readFile(full));
+                    const json = full.slice(0, -LEGACY_EXT.length) + '.json';
+                    await withLock(json, async () => {
+                        if (!fs.existsSync(json)) await writeAtomic(json, encodeValue(value));
+                        await fsp.rm(full, { force: true });
+                    });
+                    converted++;
+                } catch { /* another runtime's file */ }
+            }
+        }
+    };
+    await walk(root);
+    if (converted) console.log(`[storage] converted ${converted} data files to JSON`);
+}
+
 function registerIpc(ipcMain) {
     for (const [name, fn] of Object.entries(api)) {
         ipcMain.handle(`wosu:db:${name}`, (_e, ...args) => fn(...args));
@@ -211,4 +298,4 @@ function registerIpc(ipcMain) {
 
 for (const d of [SONGS_DIR, SKINS_DIR]) fs.mkdirSync(d, { recursive: true });
 
-module.exports = { DATA_DIR, SONGS_DIR, SKINS_DIR, registerIpc, isOwnedRawKey, storeOf };
+module.exports = { DATA_DIR, SONGS_DIR, SKINS_DIR, registerIpc, isOwnedRawKey, storeOf, migrateLegacy, encodeValue, decodeValue };
