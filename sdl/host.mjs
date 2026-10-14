@@ -500,8 +500,10 @@ const proto2d = Object.getPrototypeOf(createCanvas(1, 1).getContext('2d'));
 g.CanvasRenderingContext2D = proto2d.constructor;
 
 // Browsers fall back to system fonts for glyphs a font lacks (Exo 2 has no ★); Skia only
-// does if the families are listed. Append macOS's symbol fonts to every font the game sets.
-const FALLBACK_FONTS = ', "Apple Symbols", "Arial Unicode MS", "Apple Color Emoji", sans-serif';
+// does if the families are listed. Latin first (Helvetica Neue, as Chrome on macOS): Pixi sizes
+// text lines by the ink of "|ÉqÅM", which an icon font lacks — drawn in a symbol font those
+// letters are short and icons lose their tops. Then macOS's symbol fonts for the rest.
+const FALLBACK_FONTS = ', "Helvetica Neue", "Apple Symbols", "Arial Unicode MS", "Apple Color Emoji", sans-serif';
 const fontDesc = Object.getOwnPropertyDescriptor(proto2d, 'font');
 if (fontDesc?.set) {
     Object.defineProperty(proto2d, 'font', {
@@ -512,24 +514,6 @@ if (fontDesc?.set) {
             fontDesc.set.call(this, s.includes('Apple Symbols') ? s : s + FALLBACK_FONTS);
         },
     });
-    // Line metrics (fontBoundingBox*) must stay the primary font's, as in Chrome: Pixi sizes text
-    // by them, and with the fallbacks listed Skia took them from whichever font drew "|ÉqÅM"
-    // (Apple Symbols for an icon font) — icons lost their tops.
-    const measureText = proto2d.measureText;
-    proto2d.measureText = function (text) {
-        const m = measureText.call(this, text);
-        const full = fontDesc.get.call(this);
-        if (!full.endsWith(FALLBACK_FONTS)) return m;
-        fontDesc.set.call(this, full.slice(0, -FALLBACK_FONTS.length));
-        const primary = measureText.call(this, text);
-        fontDesc.set.call(this, full);
-        const out = {};
-        for (const k of ['width', 'actualBoundingBoxLeft', 'actualBoundingBoxRight', 'actualBoundingBoxAscent', 'actualBoundingBoxDescent',
-            'fontBoundingBoxAscent', 'fontBoundingBoxDescent', 'emHeightAscent', 'emHeightDescent', 'hangingBaseline', 'alphabeticBaseline', 'ideographicBaseline']) out[k] = m[k];
-        out.fontBoundingBoxAscent = primary.fontBoundingBoxAscent;
-        out.fontBoundingBoxDescent = primary.fontBoundingBoxDescent;
-        return out;
-    };
 }
 const drawImage = proto2d.drawImage;
 proto2d.drawImage = function (src, ...a) {
@@ -914,6 +898,16 @@ console.log('[sdl] game module loaded:', entry);
  * intro, start Autoplay on a dense map, and let the fps lines show gameplay.
  * The same map as the Electron profile: the most objects among 5-6.5* maps over 100 s.
  */
+/** OPEN=settings (with WOSU_DEBUG=1): skip the intro and open the settings overlay (screenshots). */
+if (process.env.OPEN === 'settings') {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    for (let i = 0; i < 100 && !g.game; i++) await sleep(200);
+    await sleep(1500);
+    g.game.screens.current?.begin?.();
+    await sleep(2500);
+    g.game.settingsOverlay.show();
+}
+
 if (process.env.AUTOPLAY) {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     for (let i = 0; i < 100 && !(g.game && g.game.library.sets.length > 100); i++) await sleep(300);
