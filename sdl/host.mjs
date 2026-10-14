@@ -188,6 +188,29 @@ g.Worker = class WorkerShim extends EventTarget {
 for (const [k, v] of Object.entries(webAudio)) if (!(k in g)) g[k] = v;
 g.webkitAudioContext = g.AudioContext;
 
+/**
+ * node-web-audio-api panics (and Rust aborts the whole process) when a
+ * source plays a buffer with no frames or channels — skins ship empty .wav
+ * files to mute a hitsound, which browsers just play as silence. Such
+ * sources don't start here; they report "ended" like a finished sound.
+ */
+{
+    const Src = webAudio.AudioBufferSourceNode;
+    const start = Src.prototype.start;
+    Src.prototype.start = function (...args) {
+        const b = this.buffer;
+        if (!b || !(b.length > 0) || !(b.numberOfChannels > 0)) {
+            setTimeout(() => {
+                const ev = new Event('ended');
+                this.onended?.(ev);
+                this.dispatchEvent?.(ev);
+            });
+            return;
+        }
+        return start.apply(this, args);
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Canvas: 'webgpu' → the SDL window, '2d' → Skia
 // ---------------------------------------------------------------------------
