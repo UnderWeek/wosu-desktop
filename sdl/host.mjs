@@ -538,6 +538,20 @@ g.requestAnimationFrame = cb => {
 };
 g.cancelAnimationFrame = id => rafQueue.delete(id);
 
+/**
+ * The game hides the OS cursor while it draws its own, with a class on <html>
+ * and a "cursor: none" rule (src/app/Cursor.ts): mirror that in SDL.
+ */
+const NO_OS_CURSOR_CLASS = 'wosu-no-os-cursor';
+let cursorShown = true;
+function syncCursor() {
+    const want = !doc.documentElement.classList.contains(NO_OS_CURSOR_CLASS);
+    if (want !== cursorShown) {
+        cursorShown = want;
+        sdl.mouse.showCursor(want);
+    }
+}
+
 const stats = { frames: 0, worst: 0, since: performance.now() };
 function frame() {
     if (win.destroyed) return;
@@ -552,6 +566,7 @@ function frame() {
         }
     }
     // Pixi submitted this frame's work into renderer.getCurrentTexture(): show it.
+    syncCursor();
     const drew = textureTaken && renderer;
     if (drew) {
         mainContext.present();
@@ -576,24 +591,47 @@ function frame() {
 // Input: SDL events → DOM events (window for the game, the canvas for Pixi)
 // ---------------------------------------------------------------------------
 
-const CODES = { escape: 'Escape', return: 'Enter', space: 'Space', backspace: 'Backspace', tab: 'Tab', grave: 'Backquote', backquote: 'Backquote',
-    left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown', leftShift: 'ShiftLeft', rightShift: 'ShiftRight',
-    leftCtrl: 'ControlLeft', rightCtrl: 'ControlRight', leftAlt: 'AltLeft', rightAlt: 'AltRight', leftGui: 'MetaLeft', rightGui: 'MetaRight',
-    delete: 'Delete', home: 'Home', end: 'End', pageUp: 'PageUp', pageDown: 'PageDown', minus: 'Minus', equals: 'Equal', comma: 'Comma', period: 'Period', slash: 'Slash' };
+/**
+ * KeyboardEvent.code is the PHYSICAL key (SDL's scancode), whatever the
+ * layout; .key is what the layout types. Using SDL's virtual key for .code
+ * would make Z/X arrive as Cyrillic letters on a Russian layout.
+ */
+const SC_NAME = Object.fromEntries(Object.entries(sdl.keyboard.SCANCODE).map(([n, v]) => [v, n]));
+const SC_CODE = {
+    RETURN: 'Enter', ESCAPE: 'Escape', BACKSPACE: 'Backspace', TAB: 'Tab', SPACE: 'Space', MINUS: 'Minus', EQUALS: 'Equal',
+    LEFTBRACKET: 'BracketLeft', RIGHTBRACKET: 'BracketRight', BACKSLASH: 'Backslash', SEMICOLON: 'Semicolon', APOSTROPHE: 'Quote',
+    GRAVE: 'Backquote', COMMA: 'Comma', PERIOD: 'Period', SLASH: 'Slash', CAPSLOCK: 'CapsLock', INSERT: 'Insert', HOME: 'Home',
+    PAGEUP: 'PageUp', DELETE: 'Delete', END: 'End', PAGEDOWN: 'PageDown', RIGHT: 'ArrowRight', LEFT: 'ArrowLeft', DOWN: 'ArrowDown',
+    UP: 'ArrowUp', PRINTSCREEN: 'PrintScreen', NONUSBACKSLASH: 'IntlBackslash', KP_ENTER: 'NumpadEnter', KP_PERIOD: 'NumpadDecimal',
+    KP_PLUS: 'NumpadAdd', KP_MINUS: 'NumpadSubtract', KP_MULTIPLY: 'NumpadMultiply', KP_DIVIDE: 'NumpadDivide',
+    LCTRL: 'ControlLeft', RCTRL: 'ControlRight', LSHIFT: 'ShiftLeft', RSHIFT: 'ShiftRight', LALT: 'AltLeft', RALT: 'AltRight', LGUI: 'MetaLeft', RGUI: 'MetaRight',
+};
 function codeOf(e) {
-    const k = String(e.key ?? '');
-    if (/^[a-z]$/i.test(k)) return 'Key' + k.toUpperCase();
-    if (/^[0-9]$/.test(k)) return 'Digit' + k;
-    if (/^f([1-9]|1[0-2])$/i.test(k)) return k.toUpperCase();
-    return CODES[k] ?? k;
+    const n = SC_NAME[e.scancode] ?? '';
+    if (/^[A-Z]$/.test(n)) return 'Key' + n;
+    if (/^[0-9]$/.test(n)) return 'Digit' + n;
+    if (/^F([1-9]|1[0-9]|2[0-4])$/.test(n)) return n;
+    if (/^KP_[0-9]$/.test(n)) return 'Numpad' + n.slice(3);
+    return SC_CODE[n] ?? n;
+}
+const KEY_NAMES = { return: 'Enter', enter: 'Enter', escape: 'Escape', backspace: 'Backspace', tab: 'Tab', space: ' ', delete: 'Delete',
+    left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown', home: 'Home', end: 'End', pageUp: 'PageUp', pageDown: 'PageDown',
+    shift: 'Shift', ctrl: 'Control', alt: 'Alt', gui: 'Meta', capsLock: 'CapsLock' };
+/** KeyboardEvent.key: the typed character for printable keys, else the key's name. */
+function keyOf(e, code) {
+    const k = e.key ?? '';
+    if (k.length === 1) return e.shift ? k.toUpperCase() : k;
+    if (KEY_NAMES[k]) return KEY_NAMES[k];
+    if (/^f([1-9]|1[0-9]|2[0-4])$/.test(k)) return k.toUpperCase();
+    return code;
 }
 const mods = { shiftKey: false, ctrlKey: false, altKey: false, metaKey: false };
-function updateMods(e, down) {
-    const c = codeOf(e);
-    if (c.startsWith('Shift')) mods.shiftKey = down;
-    if (c.startsWith('Control')) mods.ctrlKey = down;
-    if (c.startsWith('Alt')) mods.altKey = down;
-    if (c.startsWith('Meta')) mods.metaKey = down;
+/** SDL reports the modifier state on every key event; mouse events reuse the latest. */
+function updateMods(e) {
+    mods.shiftKey = !!e.shift;
+    mods.ctrlKey = !!e.ctrl;
+    mods.altKey = !!e.alt;
+    mods.metaKey = !!e.super;
 }
 const pointer = { x: 0, y: 0, buttons: 0 };
 function pointerEvent(type, extra = {}) {
@@ -625,8 +663,10 @@ win.on('mouseButtonUp', e => {
     pointerEvent('pointerup', { button: b });
 });
 win.on('mouseWheel', e => {
+    // SDL: positive dy scrolls away from the user; DOM: positive deltaY scrolls down. "flipped" = macOS natural scrolling.
+    const f = e.flipped ? -1 : 1;
     const target = mainContext?.canvas ?? doc.body;
-    target.dispatchEvent(new hw.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -e.dy * 100, deltaX: e.dx * 100, clientX: pointer.x, clientY: pointer.y, ...mods }));
+    target.dispatchEvent(new hw.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 0, deltaY: -e.dy * f * 100, deltaX: e.dx * f * 100, clientX: pointer.x, clientY: pointer.y, ...mods }));
 });
 /** The focused text field, if any (the game types through one hidden <input>). */
 function focusedInput() {
@@ -673,17 +713,26 @@ function editField(el, code) {
 }
 
 win.on('keyDown', e => {
-    updateMods(e, true);
+    updateMods(e);
     const code = codeOf(e);
-    const ev = new hw.KeyboardEvent('keydown', { bubbles: true, cancelable: true, code, key: e.key?.length === 1 ? e.key : code, repeat: !!e.repeat, ...mods });
+    // The modifier key itself is down from its own keydown on (SDL's flags lag one event).
+    if (code.startsWith('Shift')) mods.shiftKey = true;
+    if (code.startsWith('Control')) mods.ctrlKey = true;
+    if (code.startsWith('Alt')) mods.altKey = true;
+    if (code.startsWith('Meta')) mods.metaKey = true;
+    const ev = new hw.KeyboardEvent('keydown', { bubbles: true, cancelable: true, code, key: keyOf(e, code), repeat: !!e.repeat, ...mods });
     const field = focusedInput();
     (field ?? hw).dispatchEvent(ev);
     if (field && !ev.defaultPrevented) editField(field, code);
 });
 win.on('keyUp', e => {
+    updateMods(e);
     const code = codeOf(e);
-    (focusedInput() ?? hw).dispatchEvent(new hw.KeyboardEvent('keyup', { bubbles: true, cancelable: true, code, key: e.key?.length === 1 ? e.key : code, ...mods }));
-    updateMods(e, false);
+    if (code.startsWith('Shift')) mods.shiftKey = false;
+    if (code.startsWith('Control')) mods.ctrlKey = false;
+    if (code.startsWith('Alt')) mods.altKey = false;
+    if (code.startsWith('Meta')) mods.metaKey = false;
+    (focusedInput() ?? hw).dispatchEvent(new hw.KeyboardEvent('keyup', { bubbles: true, cancelable: true, code, key: keyOf(e, code), ...mods }));
 });
 // Typed characters (after the keyboard layout and IME): into the focused field.
 win.on('textInput', e => {
