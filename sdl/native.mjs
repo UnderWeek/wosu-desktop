@@ -17,7 +17,15 @@ const require = createRequire(import.meta.url);
  * done with macOS tools so those modules run unchanged here.
  */
 const Module = require('node:module');
-const fakeElectron = {
+const ANDROID = process.platform === 'android';
+const fakeElectron = ANDROID ? {
+    // No trash or file manager to hand off to on Android.
+    shell: {
+        trashItem: p => fs.promises.rm(p, { recursive: true, force: true }),
+        openPath: async () => '',
+        showItemInFolder: () => {},
+    },
+} : {
     shell: {
         trashItem: p => new Promise((resolve, reject) => execFile('/usr/bin/osascript', ['-e', `tell application "Finder" to delete (POSIX file ${JSON.stringify(p)} as alias)`], e => (e ? reject(e) : resolve()))),
         openPath: async p => { execFile('/usr/bin/open', [p]); return ''; },
@@ -152,6 +160,8 @@ export function createNative({ onConfigChange } = {}) {
 /** Start a fresh host (same command and environment) and exit this one. */
 export function relaunch() {
     prefs.flush();
+    // Android: a process can't start its own activity again; the player reopens the app.
+    if (ANDROID) process.exit(0);
     spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() }).unref();
     process.exit(0);
 }

@@ -15,17 +15,20 @@ import { execFileSync } from 'node:child_process';
 import { resolveObjectURL } from 'node:buffer';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import sdl from '@kmamal/sdl';
 import gpu from '@kmamal/gpu';
 import { Window as HappyWindow } from 'happy-dom';
 import { createCanvas, GlobalFonts, loadImage } from '@napi-rs/canvas';
 import * as webAudio from 'node-web-audio-api';
 import { createNative, relaunch } from './native.mjs';
 
+/** Android: the same host on libwosu.so's window and touch (android/sdl-shim.mjs). */
+const ANDROID = process.platform === 'android';
+const sdl = ANDROID ? (await import('../android/sdl-shim.mjs')).default : (await import('@kmamal/sdl')).default;
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '..', 'dist');
 const ORIGIN = 'wosu://app/';
-const PRESENT = process.env.PRESENT || 'immediate';
+const PRESENT = process.env.PRESENT || (ANDROID ? 'mailbox' : 'immediate');
 
 // ---------------------------------------------------------------------------
 // Window + GPU
@@ -232,7 +235,8 @@ g.webkitAudioContext = g.AudioContext;
 let mainContext = null;
 /** Only present frames the game actually drew into (Dawn rejects presenting an untouched surface). */
 let textureTaken = false;
-const SURFACE_FORMAT = 'bgra8unorm';
+/** The window surface's format (the renderer's preferred one: BGRA on macOS, usually RGBA on Android). */
+let SURFACE_FORMAT = 'bgra8unorm';
 
 /**
  * The game's 'webgpu' canvas. Pixi renders into a real texture the size of
@@ -323,6 +327,7 @@ class GPUCanvasContextShim {
             this.device = cfg.device;
             patchQueue(cfg.device);
             renderer = gpu.renderGPUDeviceToWindow({ device: cfg.device, window: win, presentMode: PRESENT });
+            SURFACE_FORMAT = renderer.getPreferredFormat() ?? SURFACE_FORMAT;
             const module = cfg.device.createShaderModule({ code: BLIT_WGSL });
             this.pipeline = cfg.device.createRenderPipeline({
                 layout: 'auto',
@@ -403,7 +408,7 @@ class GPUCanvasContextShim {
     /** Draw this frame's canvas onto the window and show it. */
     present() {
         this.clearedThisFrame = false;
-        if (!this.texture) return;
+        if (!this.texture || !surfaceReady) return;
         const enc = this.device.createCommandEncoder();
         const pass = enc.beginRenderPass({
             colorAttachments: [{ view: renderer.getCurrentTextureView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }],
@@ -614,8 +619,10 @@ g.cancelAnimationFrame = id => rafQueue.delete(id);
  * check every frame and recreate the surface when they differ.
  */
 let surfaceSize = '';
+/** Android: no surface while the app is in the background. */
+let surfaceReady = true;
 function syncSurfaceSize() {
-    if (!renderer) return;
+    if (!renderer || !surfaceReady) return;
     const size = `${win.pixelWidth}x${win.pixelHeight}`;
     if (size === surfaceSize) return;
     if (surfaceSize) renderer.resize();
@@ -640,6 +647,7 @@ function syncCursor() {
 const stats = { frames: 0, worst: 0, since: performance.now() };
 function frame() {
     if (win.destroyed) return;
+    sdl.pump?.();
     const t = performance.now();
     const q = rafQueue;
     rafQueue = new Map();
@@ -748,6 +756,33 @@ win.on('mouseButtonUp', e => {
     pointer.buttons &= ~(1 << b);
     pointerEvent('pointerup', { button: b });
 });
+// Android: each finger is its own touch pointer, timestamped by the OS.
+const touchIds = new Map();
+win.on('touch', e => {
+    const type = { down: 'pointerdown', move: 'pointermove', up: 'pointerup', cancel: 'pointercancel' }[e.action];
+    if (e.action === 'down') touchIds.set(e.id, touchIds.size === 0);
+    const primary = touchIds.get(e.id) ?? false;
+    if (primary) {
+        pointer.x = e.x;
+        pointer.y = e.y;
+    }
+    const init = { clientX: e.x, clientY: e.y, pageX: e.x, pageY: e.y, screenX: e.x, screenY: e.y, pointerId: 2 + e.id, pointerType: 'touch',
+        isPrimary: primary, button: e.action === 'move' ? -1 : 0, buttons: e.action === 'down' || e.action === 'move' ? 1 : 0, timeStamp: e.time };
+    const target = mainContext?.canvas ?? doc.body;
+    if (e.action === 'move') target.dispatchEvent(new hw.PointerEvent('pointerrawupdate', { bubbles: true, cancelable: true, ...init }));
+    target.dispatchEvent(new hw.PointerEvent(type, { bubbles: true, cancelable: true, ...init }));
+    if (e.action === 'up' || e.action === 'cancel') touchIds.delete(e.id);
+});
+win.on('surfaceLost', () => {
+    surfaceReady = false;
+    renderer?.release?.();
+});
+win.on('surfaceRestored', () => {
+    surfaceReady = true;
+    renderer?.resize();
+    surfaceSize = `${win.pixelWidth}x${win.pixelHeight}`;
+    if (mainContext) mainContext.badgeRectFor = null;
+});
 win.on('mouseWheel', e => {
     // SDL: positive dy scrolls away from the user; DOM: positive deltaY scrolls down. "flipped" = macOS natural scrolling.
     const f = e.flipped ? -1 : 1;
@@ -844,7 +879,7 @@ win.on('dropFile', e => {
     }
 });
 win.on('resize', () => {
-    renderer?.resize();
+    if (surfaceReady) renderer?.resize();
     hw.dispatchEvent(new hw.Event('resize'));
 });
 // Focus: the game pauses on blur and drops to 30 fps in the background (see desktop.ts).
@@ -904,6 +939,15 @@ await import(pathToFileURL(path.join(DIST, entry)).href);
 console.log('[sdl] game module loaded:', entry);
 
 // TRACE=1 (with WOSU_DEBUG=1): when the game gets its first screen, and every screen change after.
+// TRACE=1: Pixi's "destroyed while still bound" warning, with who destroyed the texture.
+if (process.env.TRACE) {
+    const warn = console.warn.bind(console);
+    console.warn = (...args) => {
+        warn(...args);
+        if (String(args[1] ?? args[0]).includes('still bound')) warn(new Error('destroyed from').stack.split('\n').slice(2, 14).join('\n'));
+    };
+}
+
 if (process.env.TRACE) {
     const t0 = performance.now();
     const log = msg => console.log(`[trace] +${Math.round(performance.now() - t0)} ms ${msg}`);
