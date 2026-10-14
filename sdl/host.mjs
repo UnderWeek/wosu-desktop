@@ -403,7 +403,12 @@ doc.createElement = (tag, opts) => {
     };
     el.toBlob = (cb, type = 'image/png') => cb(new Blob([ensure().toBuffer(type === 'image/jpeg' ? 'image/jpeg' : 'image/png')], { type }));
     el.toDataURL = (type) => ensure().toDataURL(type);
-    el.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, width: w, height: h, right: w, bottom: h });
+    // On-screen size (CSS), not the backing size: Pixi sets style.width/height to the window's
+    // size, and maps the pointer by it. With a render resolution under 100% the two differ.
+    el.getBoundingClientRect = () => {
+        const cw = parseFloat(el.style.width) || w, ch = parseFloat(el.style.height) || h;
+        return { x: 0, y: 0, left: 0, top: 0, width: cw, height: ch, right: cw, bottom: ch };
+    };
     return el;
 };
 
@@ -666,7 +671,11 @@ win.on('mouseWheel', e => {
     // SDL: positive dy scrolls away from the user; DOM: positive deltaY scrolls down. "flipped" = macOS natural scrolling.
     const f = e.flipped ? -1 : 1;
     const target = mainContext?.canvas ?? doc.body;
-    target.dispatchEvent(new hw.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 0, deltaY: -e.dy * f * 100, deltaX: e.dx * f * 100, clientX: pointer.x, clientY: pointer.y, ...mods }));
+    const ev = new hw.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 0, deltaY: -e.dy * f * 100, deltaX: e.dx * f * 100 });
+    // happy-dom's WheelEvent isn't a MouseEvent: no position or modifiers, which Pixi hit-tests with.
+    const pos = { clientX: pointer.x, clientY: pointer.y, pageX: pointer.x, pageY: pointer.y, screenX: pointer.x, screenY: pointer.y, x: pointer.x, y: pointer.y, offsetX: pointer.x, offsetY: pointer.y, buttons: pointer.buttons, ...mods };
+    for (const [k, v] of Object.entries(pos)) Object.defineProperty(ev, k, { value: v, configurable: true });
+    target.dispatchEvent(ev);
 });
 /** The focused text field, if any (the game types through one hidden <input>). */
 function focusedInput() {
