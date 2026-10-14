@@ -48,7 +48,11 @@ export class GameplayInput {
     ) {
         this.x = start.x;
         this.y = start.y;
-        this.listen('pointermove', e => this.onMove(e as PointerEvent));
+        // `pointerrawupdate` (secure contexts, Chromium) fires as each sample
+        // arrives; `pointermove` is batched to once per frame. Aim (tablets
+        // especially) should not wait for the next frame.
+        const rawUpdates = typeof window !== 'undefined' && 'onpointerrawupdate' in window;
+        this.listen(rawUpdates ? 'pointerrawupdate' : 'pointermove', e => this.onMove(e as PointerEvent));
         this.listen('pointerdown', e => this.onDown(e as PointerEvent));
         this.listen('pointerup', e => this.onUp(e as PointerEvent));
         this.listen('pointercancel', e => this.onUp(e as PointerEvent));
@@ -103,6 +107,9 @@ export class GameplayInput {
         if (e.pointerType === 'touch' || e.pointerType === 'pen') {
             this.x = p.x;
             this.y = p.y;
+            // A tablet pen's tip is its mouse button (lazer): "Mouse buttons in
+            // gameplay" off means aim only. Touchscreens have nothing else to tap with.
+            if (e.pointerType === 'pen' && !this.settings.mouseButtons.value) return;
             // Alternate the two virtual buttons so streams register as presses.
             const button: GameplayButton = this.down.M1 ? 'M2' : 'M1';
             this.touches.set(e.pointerId, button);

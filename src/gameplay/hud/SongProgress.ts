@@ -1,4 +1,4 @@
-import { Container, Graphics, type BitmapText } from 'pixi.js';
+import { Container, Graphics, Sprite, Texture, type BitmapText } from 'pixi.js';
 import type { PlayableBeatmap } from '../../beatmap/types';
 import { formatTime } from '../../core/math';
 import { counterText } from '../../ui/text';
@@ -14,7 +14,12 @@ const LABEL_H = 22;
  */
 export class SongProgress extends Container {
     private readonly graph = new Graphics();
-    private readonly bar = new Graphics();
+    /**
+     * The fill bar moves every frame: sprites resized by their transform,
+     * not a Graphics redrawn (which makes Pixi rebuild the scene's draw list).
+     */
+    private readonly barBack = new Sprite(Texture.WHITE);
+    private readonly barFill = new Sprite(Texture.WHITE);
     private readonly elapsed: BitmapText;
     private readonly percent: BitmapText;
     private readonly remaining: BitmapText;
@@ -45,7 +50,14 @@ export class SongProgress extends Container {
         this.percent.anchor.set(0.5, 1);
         this.elapsed.anchor.set(0, 1);
         this.remaining.anchor.set(1, 1);
-        this.addChild(this.graph, this.bar, this.elapsed, this.percent, this.remaining);
+        this.barBack.alpha = 0.12;
+        this.barFill.tint = 0xbbf4ff;
+        for (const s of [this.barBack, this.barFill]) {
+            s.y = -BAR_H;
+            s.height = BAR_H;
+        }
+        this.barFill.width = 0;
+        this.addChild(this.graph, this.barBack, this.barFill, this.elapsed, this.percent, this.remaining);
     }
 
     /** lazer's "show difficulty graph": without it only the bar and times remain. */
@@ -65,6 +77,7 @@ export class SongProgress extends Container {
     layout(width: number): void {
         this.w = width;
         this.drawnColumn = -2;
+        this.barBack.width = width;
         const y = -BAR_H - (this._showGraph ? GRAPH_H : 0) - 4;
         this.elapsed.position.set(8, y);
         this.percent.position.set(width / 2, y);
@@ -84,8 +97,7 @@ export class SongProgress extends Container {
                 g.rect(i * cw + 0.5, -BAR_H - hgt, Math.max(1, cw - 1), hgt).fill({ color: i < col ? 0x99eeff : 0xffffff, alpha: i < col ? 0.5 : 0.15 });
             }
         }
-        this.bar.clear().rect(0, -BAR_H, this.w, BAR_H).fill({ color: 0xffffff, alpha: 0.12 });
-        this.bar.rect(0, -BAR_H, this.w * p, BAR_H).fill({ color: 0xbbf4ff });
+        this.barFill.width = this.w * p;
         const second = Math.floor(time / 1000);
         if (second !== this.lastSecond) {
             this.lastSecond = second;

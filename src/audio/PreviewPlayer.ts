@@ -8,6 +8,7 @@
  * crossOrigin load fails; we then retry unrouted and drive element.volume
  * ourselves (no visualiser data for that clip).
  */
+import { audioLog } from '../debug/AudioDebug';
 import { Signal } from '../core/Signal';
 import type { AudioEngine } from './AudioEngine';
 import { rampParam } from './base';
@@ -25,6 +26,8 @@ interface Clip {
 
 export interface PreviewPlayOptions {
     fadeInMs?: number;
+    /** Start this far in (ms); a negative value means that fraction of the duration (-0.4 = 40%). */
+    startAt?: number;
     /** Clip volume (0..1) on top of the music/master buses. */
     volume?: number;
 }
@@ -71,6 +74,7 @@ export class PreviewPlayer {
      */
     async play(url: string, opts: PreviewPlayOptions = {}): Promise<void> {
         const gen = ++this.generation;
+        audioLog('preview.play', `gen=${gen} ${url.startsWith('blob:') ? 'blob' : url.slice(-50)} startAt=${opts.startAt ?? 0}`);
         const fadeInMs = opts.fadeInMs ?? 200;
         const volume = Math.max(0, Math.min(1, opts.volume ?? 1));
         if (this.current) {
@@ -80,11 +84,11 @@ export class PreviewPlayer {
         }
         let clip: Clip;
         try {
-            clip = await this.startClip(url, true, gen);
+            clip = await this.startClip(url, true, gen, opts.startAt);
         } catch (e) {
             if (gen !== this.generation) throw new Error('preview superseded');
             // Likely a CORS failure on the routed attempt: retry unrouted.
-            clip = await this.startClip(url, false, gen).catch(err => {
+            clip = await this.startClip(url, false, gen, opts.startAt).catch(err => {
                 throw err instanceof Error ? err : new Error(String(e));
             });
         }
@@ -98,6 +102,7 @@ export class PreviewPlayer {
 
     stop(fadeOutMs = 300): void {
         this.generation++;
+        if (this.current) audioLog('preview.stop', `gen=${this.generation} fade ${fadeOutMs}`);
         const c = this.current;
         this.current = null;
         if (c) this.fadeOutAndDispose(c, fadeOutMs);
@@ -110,7 +115,7 @@ export class PreviewPlayer {
         this.ended.clear();
     }
 
-    private startClip(url: string, routed: boolean, gen: number): Promise<Clip> {
+    private startClip(url: string, routed: boolean, gen: number, startAt?: number): Promise<Clip> {
         const el = this.createElement();
         const clip: Clip = { el, url, source: null, gain: null, fadeTimer: null, level: 0, disposed: false };
         el.preload = 'auto';
@@ -145,6 +150,13 @@ export class PreviewPlayer {
             };
             const cleanupListeners = (): void => el.removeEventListener('error', onError);
             el.addEventListener('error', onError);
+            if (startAt !== undefined && startAt !== 0) {
+                el.addEventListener('loadedmetadata', () => {
+                    const d = el.duration;
+                    const t = startAt < 0 ? (Number.isFinite(d) ? d * -startAt : 0) : startAt / 1000;
+                    try { el.currentTime = Number.isFinite(d) ? Math.min(t, Math.max(0, d - 1)) : t; } catch { /* ignore */ }
+                }, { once: true });
+            }
             el.src = url;
             let p: Promise<void> | undefined;
             try {

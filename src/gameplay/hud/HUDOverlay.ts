@@ -1,4 +1,5 @@
 import { Container } from 'pixi.js';
+import { pixelRatio } from '../../app/App';
 import type { PlayableBeatmap } from '../../beatmap/types';
 import { tween } from '../../core/Tweener';
 import type { GameSettings, HudVisibility } from '../../settings/Settings';
@@ -268,7 +269,7 @@ export class HUDOverlay extends Container {
         const lu = this.legacyUnit;
         const lb = this.leaderboard;
         lb.scale.set(lu);
-        lb.setTextResolution(lu * (globalThis.devicePixelRatio || 1));
+        lb.setTextResolution(lu * pixelRatio());
         if (this.legacy) {
             const above = (this.combo.textHeight * 1.56 + 20) * 1.28 + 185;
             lb.position.set(10 * lu, this.h - (above + LEADERBOARD_HEIGHT) * lu);

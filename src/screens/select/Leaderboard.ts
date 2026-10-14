@@ -234,7 +234,7 @@ export class LocalLeaderboard extends UIComponent {
         if (r.hasReplay) entries.push({ text: 'Watch replay', type: 'highlighted', action: () => this.onWatchReplay?.(r) });
         if (r.mods.length) entries.push({ text: 'Use these mods', action: () => (this.game.mods.value = sanitizeMods(r.mods, r.modSettings)) });
         if (r.hasReplay) entries.push({ text: 'Export replay (.osr)', action: () => this.onExport?.(r) });
-        if (r.id !== undefined) {
+        if (this.game.scores.canDelete(r)) {
             if (entries.length) entries.push(MENU_SPACER);
             entries.push({ text: 'Delete', type: 'destructive', action: () => this.onDelete?.(r) });
         }

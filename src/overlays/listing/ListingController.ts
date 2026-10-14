@@ -83,7 +83,7 @@ export class ListingController {
     }
 
     librarySet(sid: number): LibrarySet | undefined {
-        return this.game.library.get(`osu-${sid}`);
+        return this.game.library.byOnlineId(sid);
     }
 
     /** Download + import (deduped). Resolves with the library set or null. */

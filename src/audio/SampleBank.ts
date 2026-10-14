@@ -102,9 +102,14 @@ export class SampleBank {
         if (buffer) this.playBuffer(buffer, volume, opts);
     }
 
-    /** Play any decoded buffer (e.g. a beatmap's own hitsound) like a bank sample. */
-    playBuffer(buffer: AudioBuffer, volume: number, opts: PlayOptions = {}): void {
-        if (!(volume > 0)) return;
+    /**
+     * Play any decoded buffer (e.g. a beatmap's own hitsound) like a bank
+     * sample. Returns a stop function (with a short fade) for sounds that
+     * must not outlive their screen, like a map's long failsound.
+     */
+    playBuffer(buffer: AudioBuffer, volume: number, opts: PlayOptions = {}): () => void {
+        const noop = () => {};
+        if (!(volume > 0)) return noop;
         const ctx = this.engine.context;
         try {
             const src = ctx.createBufferSource();
@@ -120,8 +125,23 @@ export class SampleBank {
                 if (out !== gain) try { gain.disconnect(); } catch { /* ignore */ }
             };
             src.start();
+            let stopped = false;
+            return () => {
+                if (stopped) return;
+                stopped = true;
+                try {
+                    const now = ctx.currentTime;
+                    gain.gain.cancelScheduledValues(now);
+                    gain.gain.setValueAtTime(gain.gain.value, now);
+                    gain.gain.linearRampToValueAtTime(0, now + 0.15);
+                    src.stop(now + 0.16);
+                } catch {
+                    try { src.stop(); } catch { /* already stopped */ }
+                }
+            };
         } catch (e) {
             console.warn('sample playback failed', e);
+            return noop;
         }
     }
 

@@ -37,6 +37,7 @@ export class ResultsScreen extends Screen {
     private readonly buttons = new Container();
     private retryButton: Button | null = null;
     private replayButton: Button | null = null;
+    private saveButton: Button | null = null;
     private backButton!: BackButton;
     private clock = 0;
     private panelScale = 1;
@@ -66,6 +67,9 @@ export class ResultsScreen extends Screen {
             this.replayButton = new Button('Watch replay', { color: Colors.blueDarker, icon: 'circlePlay', triangles, width: 190, height: 44 });
             this.replayButton.onActivate = () => this.watchReplay();
             this.buttons.addChild(this.replayButton);
+            this.saveButton = new Button('Save replay', { color: Colors.gray4, icon: 'download', triangles, width: 180, height: 44 });
+            this.saveButton.onActivate = () => this.saveReplay();
+            this.buttons.addChild(this.saveButton);
         }
         this.buttons.alpha = 0;
         this.backButton = new BackButton();
@@ -85,7 +89,7 @@ export class ResultsScreen extends Screen {
         if (!this.panel) return;
         const toolbar = this.game.toolbarVisible.value ? this.game.toolbar.h : 0;
         const groupW = PANEL_W + GAP + STATS_W;
-        const buttons = [this.retryButton, this.replayButton].filter((b): b is Button => !!b);
+        const buttons = [this.retryButton, this.replayButton, this.saveButton].filter((b): b is Button => !!b);
         const back = this.backButton;
         const rowW = buttons.reduce((n, b, i) => n + b.w + (i ? BUTTON_GAP : 0), 0);
         // Short landscape screens (phones): a button row under the panels
@@ -195,6 +199,26 @@ export class ResultsScreen extends Screen {
         this.leaving = true;
         this.game.uiSounds.back();
         this.game.openSongSelect();
+    }
+
+    /** lazer's results "Save replay": the play as an .osr (~/.wosu/Replays in the desktop app). */
+    private saveReplay(): void {
+        const replay = this.options.replay;
+        if (!replay) return;
+        const r = this.result;
+        void this.game.exportOsr(this.selection, {
+            player: r.player || 'Guest',
+            count300: r.count300,
+            count100: r.count100,
+            count50: r.count50,
+            countMiss: r.countMiss,
+            score: r.score,
+            maxCombo: r.maxCombo,
+            perfect: r.perfect,
+            mods: r.mods,
+            date: r.date,
+            events: replay.events,
+        });
     }
 
     private watchReplay(): void {

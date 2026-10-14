@@ -82,7 +82,12 @@ export interface KeyOverlay extends Container {
 }
 
 interface Key {
-    box: Graphics;
+    /**
+     * Drawn once, white; lighting up animates tint, alpha and scale only
+     * (redrawing a Graphics every frame makes Pixi rebuild its draw list).
+     */
+    fill: Graphics;
+    edge: Graphics;
     label: BitmapText;
     color: number;
     name: string;
@@ -113,15 +118,20 @@ export class KeyCounter extends Container implements KeyOverlay {
         for (const c of this.removeChildren()) c.destroy({ children: true });
         this.tracker = new KeyTracker(LAYOUTS[style]);
         this.keys = LAYOUTS[style].map((def, i) => {
-            const box = new Graphics();
+            const fill = new Graphics().roundRect(0, 0, SIZE, SIZE, 6).fill({ color: 0xffffff });
+            const edge = new Graphics().roundRect(0, 0, SIZE, SIZE, 6).stroke({ width: 2, color: 0xffffff });
+            for (const g of [fill, edge]) {
+                g.pivot.set(SIZE / 2, SIZE / 2);
+                g.position.set(SIZE / 2, SIZE / 2);
+            }
             const label = counterText(def.name, { size: 14 });
             label.anchor.set(0.5);
             const c = new Container();
             c.y = i * (SIZE + GAP);
             label.position.set(SIZE / 2, SIZE / 2);
-            c.addChild(box, label);
+            c.addChild(fill, edge, label);
             this.addChild(c);
-            return { box, label, color: def.color, name: def.name, lit: 0, shown: -1, dirty: true };
+            return { fill, edge, label, color: def.color, name: def.name, lit: 0, shown: -1, dirty: true };
         });
     }
 
@@ -150,12 +160,11 @@ export class KeyCounter extends Container implements KeyOverlay {
             }
             if (!changed) return;
             const scale = 1 - 0.08 * lit;
-            const inset = (SIZE * (1 - scale)) / 2;
-            k.box.clear()
-                .roundRect(inset, inset, SIZE * scale, SIZE * scale, 6)
-                .fill({ color: lit > 0.01 ? k.color : 0x000000, alpha: 0.35 + 0.5 * lit })
-                .roundRect(inset, inset, SIZE * scale, SIZE * scale, 6)
-                .stroke({ width: 2, color: 0xffffff, alpha: 0.6 + 0.4 * lit });
+            k.fill.scale.set(scale);
+            k.edge.scale.set(scale);
+            k.fill.tint = lit > 0.01 ? k.color : 0x000000;
+            k.fill.alpha = 0.35 + 0.5 * lit;
+            k.edge.alpha = 0.6 + 0.4 * lit;
             k.label.tint = lit > 0.5 ? 0x000000 : 0xffffff;
         });
     }

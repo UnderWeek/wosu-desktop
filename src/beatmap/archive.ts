@@ -47,13 +47,18 @@ const basename = (s: string): string => {
     return i === -1 ? n : n.slice(i + 1);
 };
 
+/** Reads one file of an archive that is not a zip (see `OszArchive.fromFiles`). */
+export type FileReader = (name: string) => Promise<Uint8Array>;
+
 export class OszArchive {
     readonly files: string[];
     private readonly data: Uint8Array;
     private readonly entries: Map<string, Entry>;
+    private readonly reader: FileReader | null;
 
-    private constructor(data: Uint8Array, entries: Entry[]) {
+    private constructor(data: Uint8Array, entries: Entry[], reader: FileReader | null = null) {
         this.data = data;
+        this.reader = reader;
         this.entries = new Map(entries.map(e => [e.name, e]));
         this.files = entries.map(e => e.name);
     }
@@ -79,6 +84,15 @@ export class OszArchive {
             throw new Error(`Not a valid .osz/.zip archive (${e instanceof Error ? e.message : String(e)})`);
         }
         return new OszArchive(data, entries);
+    }
+
+    /**
+     * An archive over loose files read on demand (the desktop app's
+     * osu!lazer library, whose files live in a content-addressed store).
+     */
+    static fromFiles(files: readonly { name: string; size: number }[], read: FileReader): OszArchive {
+        const entries = files.map(f => ({ raw: f.name, name: normalizePath(f.name), size: f.size }));
+        return new OszArchive(new Uint8Array(0), entries, read);
     }
 
     /** Resolve a file name as written in a .osu file to an archive entry name. */
@@ -135,6 +149,7 @@ export class OszArchive {
         const resolved = this.find(name);
         const entry = resolved ? this.entries.get(resolved) : undefined;
         if (!entry) throw new Error(`File not found in archive: ${name}`);
+        if (this.reader) return this.reader(entry.raw);
         const raw = entry.raw;
         return new Promise<Uint8Array>((resolve, reject) => {
             unzip(this.data, { filter: f => f.name === raw }, (err, files) => {

@@ -52,7 +52,7 @@ export class HitsoundPlayer {
     private playOne(set: number, name: HitsoundName, index: number, volume: number, pan: number): void {
         const o = this.override(set, name, index);
         if (o === undefined) this.samples.play(`${sampleSetName(set)}-${name}` as SampleName, volume, { pan });
-        else if (o) this.samples.playBuffer(o, volume, { pan });
+        else if (o) this.keepLong(o, this.samples.playBuffer(o, volume, { pan }));
     }
 
     private loop(set: number, name: HitsoundName, index: number, volume: number): LoopHandle {
@@ -70,7 +70,7 @@ export class HitsoundPlayer {
         if (filename && this.custom && this.useBeatmapSamples) {
             const f = this.custom.file(filename);
             if (f !== undefined) {
-                if (f) this.samples.playBuffer(f, volume, { pan });
+                if (f) this.keepLong(f, this.samples.playBuffer(f, volume, { pan }));
                 return;
             }
         }
@@ -157,7 +157,7 @@ export class HitsoundPlayer {
         const map = this.useBeatmapSamples ? this.custom?.sample('combobreak') : undefined;
         const own = map !== undefined ? map : this.userSkin?.sample('combobreak');
         if (own !== undefined) {
-            if (own) this.samples.playBuffer(own, 0.8);
+            if (own) this.keepLong(own, this.samples.playBuffer(own, 0.8));
             return;
         }
         this.samples.play('combobreak', 0.8);
@@ -170,7 +170,18 @@ export class HitsoundPlayer {
     }
 
     /** Silence every loop (pause, fail, exit). */
+    /** A map's own samples can be whole songs: those are stopped with the rest (`stopAll`). */
+    private readonly longOneShots = new Set<() => void>();
+
+    private keepLong(buffer: AudioBuffer, stop: () => void): void {
+        if (buffer.duration <= 5) return;
+        this.longOneShots.add(stop);
+        setTimeout(() => this.longOneShots.delete(stop), buffer.duration * 1000 + 500);
+    }
+
     stopAll(): void {
+        for (const stop of this.longOneShots) stop();
+        this.longOneShots.clear();
         for (const loops of this.slides.values()) for (const l of loops) l.stop();
         this.slides.clear();
         this.stopSpin();

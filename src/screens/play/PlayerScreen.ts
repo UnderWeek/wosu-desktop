@@ -1,3 +1,4 @@
+import { audioLog } from '../../debug/AudioDebug';
 import { Container, Graphics, RenderTexture } from 'pixi.js';
 import { Screen } from '../../app/Screen';
 import type { Game, Selection } from '../../app/Game';
@@ -75,6 +76,8 @@ const HEALTH_SAMPLE_MS = 250;
  * pause / fail / results flow. The loader beneath it handles retry/quit.
  */
 export class PlayerScreen extends Screen {
+    /** Stops the failsound (a map's can be a whole song); called when this screen lets go. */
+    private stopFailSound: (() => void) | null = null;
     override readonly hideToolbar = true;
     override readonly showMenuCursor = false;
     /** Settings may be opened (Ctrl+O) while paused, and apply live. */
@@ -551,6 +554,11 @@ export class PlayerScreen extends Screen {
     private releaseGameplay(): void {
         if (this.released) return;
         this.released = true;
+        if (this.stopFailSound) {
+            audioLog('player.failsound.stop');
+            this.stopFailSound();
+            this.stopFailSound = null;
+        }
         this.game.input.pointerLock.wanted = false;
         this.root.interactiveChildren = true;
         this.input?.dispose();
@@ -906,6 +914,7 @@ export class PlayerScreen extends Screen {
             return;
         }
         this.phase = 'failed';
+        audioLog('player.fail', `track #${this.options.track.debugId}`);
         this.failedAtTime = this.clock.frameTime;
         this.failClock = 0;
         this.allowOverlays = false;
@@ -919,7 +928,11 @@ export class PlayerScreen extends Screen {
         // A skin (or the map, with beatmap hitsounds on) may bring its own failsound.
         const fromMap = this.game.settings.beatmapHitsounds.value ? this.options.beatmapSkin?.sample('failsound') : undefined;
         const own = fromMap !== undefined ? fromMap : this.skinChain.sample('failsound');
-        if (own) this.game.samples.playBuffer(own, 1);
+        // Maps sometimes ship a whole song as their failsound: it belongs to this screen.
+        if (own) {
+            this.stopFailSound = this.game.samples.playBuffer(own, 1);
+            audioLog('player.failsound', `${own.duration.toFixed(1)}s from ${fromMap !== undefined ? 'the beatmap' : 'the skin'}`);
+        }
         else if (own === undefined) this.game.uiSounds.play('Gameplay/failsound');
         this.menu.visible = false;
         // lazer: an additive red flash fading from full over 1s.
@@ -960,6 +973,8 @@ export class PlayerScreen extends Screen {
                 description: "you're dead, try again?",
                 entries: [
                     { caption: 'Retry', color: Colors.yellowDark, action: () => this.retry() },
+                    // lazer's fail overlay "Save replay": the play up to the fail, as an .osr.
+                    ...(this.recorder && !this.options.replay ? [{ caption: 'Save replay', color: Colors.blueDarker, action: () => this.saveFailedReplay() }] : []),
                     { caption: 'Quit', color: 0xaa1b27, action: () => this.quit() },
                 ],
                 // lazer's fail overlay: Back presses its last button (Quit).
@@ -967,6 +982,32 @@ export class PlayerScreen extends Screen {
                 ...this.menuInfo(),
             });
         }
+    }
+
+    private failedReplaySaved = false;
+
+    /** Export the failed play (up to the fail) as an .osr; once per play. */
+    private saveFailedReplay(): void {
+        if (!this.recorder) return;
+        if (this.failedReplaySaved) {
+            this.game.notifications.info('This replay is already saved.');
+            return;
+        }
+        this.failedReplaySaved = true;
+        const r = this.buildResult();
+        void this.game.exportOsr(this.options.selection, {
+            player: r.player || 'Guest',
+            count300: r.count300,
+            count100: r.count100,
+            count50: r.count50,
+            countMiss: r.countMiss,
+            score: r.score,
+            maxCombo: r.maxCombo,
+            perfect: false,
+            mods: r.mods,
+            date: r.date,
+            events: this.recorder.events,
+        });
     }
 
     private complete(): void {
@@ -1093,6 +1134,7 @@ export class PlayerScreen extends Screen {
     }
 
     quit(): void {
+        audioLog('player.quit', `outcome=${this.outcome} phase=${this.phase}`);
         if (this.outcome !== 'none') return;
         this.outcome = 'quit';
         this.menu.hide();

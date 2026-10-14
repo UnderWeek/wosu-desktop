@@ -154,6 +154,11 @@ export class SkinManager {
             this.loading.value = false;
             return;
         }
+        const pending = this.store.externalPendingPromise;
+        if (pending) {
+            await pending;
+            if (token !== this.loadToken) return;
+        }
         const info = this.store.get(id);
         if (!info) {
             console.warn(`[skins] selected skin ${id} is not stored; using the default`);
@@ -162,9 +167,8 @@ export class SkinManager {
         }
         this.loading.value = true;
         try {
-            const blob = await this.store.blob(id);
-            if (!blob) throw new Error('its files are missing');
-            const archive = await OszArchive.open(blob);
+            const archive = await this.store.openArchive(id);
+            if (!archive) throw new Error('its files are missing');
             const skin = await LegacySkin.load(archive, host.audio.context);
             if (token !== this.loadToken) {
                 skin.destroy();
@@ -244,8 +248,12 @@ export class SkinManager {
         return out;
     }
 
+    /** When set, imported skins are stored there instead (desktop: "store in osu!lazer"). */
+    writer: { importSkin(data: Blob, filename: string): Promise<StoredSkin> } | null = null;
+
     /** Store one skin archive; the same skin imported again replaces the stored copy. */
     async importSkin(data: Blob, filename: string): Promise<StoredSkin> {
+        if (this.writer) return this.writer.importSkin(data, filename);
         const { meta } = await readSkinArchive(data, filename);
         const info = await this.store.put({
             id: skinId(meta),

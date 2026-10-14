@@ -15,6 +15,7 @@
  * `currentTime` interpolates with performance.now between ticks and pulls
  * gently toward the raw clock; large disagreements (seek, stall) snap.
  */
+import { audioLog, audioTrack, audioUntrack } from '../debug/AudioDebug';
 import { Signal } from '../core/Signal';
 import type { AudioEngine } from './AudioEngine';
 import { rampParam, resolveAssetUrl } from './base';
@@ -164,6 +165,11 @@ export class MusicTrack {
     private readonly ctx: BaseAudioContext;
     private readonly gain: GainNode;
     private failFilters: BiquadFilterNode[] | null = null;
+    private failStopTimer: ReturnType<typeof setTimeout> | null = null;
+    private static nextDebugId = 1;
+    /** For the audio debugger. */
+    readonly debugId = MusicTrack.nextDebugId++;
+    private _failed = false;
     private decoded: AudioBuffer | null;
     private readonly durationSec: number;
     private channelCount: number;
@@ -198,6 +204,7 @@ export class MusicTrack {
     }
 
     constructor(engine: AudioEngine, decoded: AudioBuffer, filename: string, startOffsetMs: number) {
+        audioTrack(this, () => `#${this.debugId} ${this.filename.slice(0, 40)} ${this.playing ? 'PLAYING' : 'paused'} pos=${this.position.toFixed(1)}s rate=${this.rate} vol=${this._volume.toFixed(2)}${this._failed ? ' FAILED' : ''}${this.stretch ? ' stretch' : ''}${this.source ? ' source' : ' no-source'}`);
         this.engine = engine;
         this.ctx = engine.context;
         this.decoded = decoded;
@@ -274,6 +281,7 @@ export class MusicTrack {
 
     /** Ramp the track gain; resolves when the ramp is done. */
     fadeTo(volume: number, ms: number): Promise<void> {
+        audioLog('track.fadeTo', `#${this.debugId} ${volume} over ${ms}ms`);
         this._volume = Math.max(0, Number.isFinite(volume) ? volume : 0);
         rampParam(this.gain.gain, this._volume, this.ctx.currentTime, Math.max(0, ms) / 1000);
         return new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
@@ -286,6 +294,7 @@ export class MusicTrack {
      */
     play(leadInMs = 0): void {
         if (this.disposed) return;
+        audioLog('track.play', `#${this.debugId} ${this.filename.slice(0, 40)} from ${this.position.toFixed(2)}s lead-in ${leadInMs}`);
         if ((this.ctx.state as string) === 'suspended') {
             try { void (this.ctx as AudioContext).resume(); } catch { /* ignore */ }
         }
@@ -308,6 +317,7 @@ export class MusicTrack {
     /** Pause, keeping the position (also during lead-in). Returns false when idle. */
     pause(): boolean {
         if (!this.playing) return false;
+        audioLog('track.pause', `#${this.debugId}`);
         const p = this.rawPositionSec();
         this.position = Number.isFinite(p) ? p : this.position || 0;
         this.stopSource();
@@ -318,6 +328,7 @@ export class MusicTrack {
 
     /** Stop and rewind to the start. Idempotent. */
     stop(): void {
+        audioLog('track.stop', `#${this.debugId}`);
         this.stopSource();
         this.playing = false;
         this.position = 0;
@@ -367,6 +378,7 @@ export class MusicTrack {
      */
     async setRate(rate: number, preservePitch = true, pitch?: number): Promise<void> {
         const r = Number(rate) > 0 && Number.isFinite(Number(rate)) ? Number(rate) : 1;
+        audioLog('track.setRate', `#${this.debugId} rate=${r} preservePitch=${preservePitch} playing=${this.playing}`);
         if (this.pendingStretch) await this.pendingStretch;
         const wasPlaying = this.pause();
         this.rate = r;
@@ -393,6 +405,16 @@ export class MusicTrack {
      * stop using it once a play has failed. Undone by the next playback.
      */
     failSlowdown(ms: number): void {
+        audioLog('track.failSlowdown', `#${this.debugId} ${ms}ms playing=${this.playing} stretch=${!!this.stretch}`);
+        this._failed = true;
+        // Wound down: really stop (a source left at rate 0.001 is still "playing",
+        // and anything that later resets the rate would bring the song back).
+        if (this.failStopTimer) clearTimeout(this.failStopTimer);
+        this.failStopTimer = setTimeout(() => {
+            this.failStopTimer = null;
+            audioLog('track.failStop', `#${this.debugId} failed=${this._failed}`);
+            if (this._failed) this.pause();
+        }, ms);
         const ctx = this.ctx;
         const now = ctx.currentTime;
         const end = now + ms / 1000;
@@ -434,6 +456,22 @@ export class MusicTrack {
         }
     }
 
+    /** The fail effect ran on this track (see `failSlowdown`) and no playback has started since. */
+    get failed(): boolean {
+        return this._failed;
+    }
+
+    /** Back to a normal, paused track after a failed play (the menu or a retry takes it over). */
+    recoverFromFail(): void {
+        audioLog('track.recoverFromFail', `#${this.debugId}`);
+        if (this.failStopTimer) clearTimeout(this.failStopTimer);
+        this.failStopTimer = null;
+        this.pause();
+        this._failed = false;
+        this.clearFailEffect();
+        if (this._volume < 1) this.fadeTo(1, 0);
+    }
+
     /** Remove the fail filters (a retry or the menu reuses this track). */
     private clearFailEffect(): void {
         if (!this.failFilters) return;
@@ -447,6 +485,8 @@ export class MusicTrack {
 
     dispose(): void {
         if (this.disposed) return;
+        audioLog('track.dispose', `#${this.debugId}`);
+        audioUntrack(this);
         this.stopSource();
         this.playing = false;
         if (this.stretch) {
@@ -544,6 +584,9 @@ export class MusicTrack {
     }
 
     private startSource(when: number, offset: number): void {
+        if (this.failStopTimer) clearTimeout(this.failStopTimer);
+        this.failStopTimer = null;
+        this._failed = false;
         this.clearFailEffect();
         // Once the worklet exists it owns the song (the decoded buffer was handed over), so it
         // plays every rate; NC/DC (pitch follows speed) get there by transposing, which also

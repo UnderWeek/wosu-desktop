@@ -16,7 +16,10 @@ import { BeatmapLibrary, type LibrarySet } from '../beatmap/Library';
 import type { DifficultySummary } from '../beatmap/types';
 import { NO_MODS, modSettingsOf, sanitizeMods, sortedMods, type ModSet } from '../gameplay/mods';
 import { decodeReplay, type ReplayInfo } from '../gameplay/replay/Replay';
+import { decodeOsr, encodeOsr, type OsrScore } from '../gameplay/replay/osr';
+import { md5Hex } from '../core/md5';
 import { DEFAULT_MECHANICS } from '../gameplay/scoring/mechanics';
+import { attachDesktop, desktopSettings, isDesktop, lazerLibrary } from '../native/desktop';
 import { textureFromBlob, TextureCache, textureFromUrl } from '../graphics/textures';
 import { InputManager, KeyPriority } from '../input/InputManager';
 import type { Action } from '../input/bindings';
@@ -216,12 +219,15 @@ export class Game {
         ]);
         // Imported skins and the selected one load in the background (applies from the next play).
         void this.skins.attach(this).catch(e => console.error('skin store init failed', e));
+        // Desktop app: sync with ~/.wosu/Songs and ~/.wosu/Skins, check for updates.
+        attachDesktop(this);
         this.background.setDefault();
         this.screens.push(new IntroScreen());
         this.handleLaunchParams();
         this.library.imported.add(set => this.queueStarLookup(set));
         for (const set of this.library.sets) this.queueStarLookup(set);
-        void this.fetchBundledBeatmaps();
+        // Desktop app: osu!lazer's maps count as library (no starter downloads needed).
+        void (lazerLibrary?.firstSync ?? Promise.resolve()).then(() => this.fetchBundledBeatmaps());
     }
 
     /**
@@ -232,8 +238,9 @@ export class Game {
     private async fetchBundledBeatmaps(): Promise<void> {
         const s = this.settings;
         // Already fetched: still pick up always-included maps added since (once each).
-        const sets = s.bundledBeatmapsFetched.value && this.library.sets.length > 0
-            ? ALWAYS_BUNDLED.filter(b => !s.bundledSeen.value.includes(b.sid) && !this.library.get(`osu-${b.sid}`))
+        // Desktop app: a library that is already full (osu!lazer's) needs no starter pack either.
+        const sets = (s.bundledBeatmapsFetched.value || isDesktop) && this.library.sets.length > 0
+            ? ALWAYS_BUNDLED.filter(b => !s.bundledSeen.value.includes(b.sid) && !this.library.byOnlineId(b.sid))
             : bundledSelection();
         let any = false;
         for (const set of sets) {
@@ -316,6 +323,7 @@ export class Game {
         s.uiScale.bind(v => this.app.setUiScale(v), true);
         s.resolutionScale.bind(v => this.app.setResolutionScale(v));
         s.frameLimit.bind(v => this.app.setMaxFps(v), true);
+        desktopSettings?.hidpi.bind(() => this.app.refreshResolution());
         s.showFps.bind(v => (this.fps.visible = v), true);
         s.parallax.bind(v => (this.background.parallaxEnabled = v), true);
         s.menuCursorSize.bind(v => this.cursor.menu.setCursorSize(v), true);
@@ -511,6 +519,13 @@ export class Game {
     }
 
     async importFiles(files: File[]): Promise<LibrarySet[]> {
+        // Replays are watched, not imported (one at a time: each takes over the screen).
+        const replays = files.filter(f => /\.osr$/i.test(f.name));
+        if (replays.length) {
+            void this.openReplayFile(replays[0]);
+            files = files.filter(f => !replays.includes(f));
+            if (!files.length) return [];
+        }
         // .osk (or a zip holding a skin.ini and no .osu) goes to the skins.
         const { skins, beatmaps: osz } = await this.skins.partition(files);
         if (skins.length) void this.skins.importFiles(skins);
@@ -535,7 +550,7 @@ export class Game {
     }
 
     /** Pick a file with the browser's file dialog (programmatic, never shown in-page). */
-    pickFiles(accept = '.osz,.osk,.zip'): void {
+    pickFiles(accept = '.osz,.osk,.zip,.osr'): void {
         const el = document.createElement('input');
         el.type = 'file';
         el.accept = accept;
@@ -552,8 +567,17 @@ export class Game {
      * imported set, or null on failure/cancel.
      */
     async downloadSet(set: Pick<OnlineSet, 'sid' | 'title' | 'artist'>, opts: { video?: boolean } = {}): Promise<LibrarySet | null> {
-        const existing = this.library.get(`osu-${set.sid}`);
+        const existing = this.library.byOnlineId(set.sid);
         if (existing) return existing;
+        // Desktop "store in osu!lazer": nothing can be saved while lazer is open.
+        if (lazerLibrary?.writes) {
+            try {
+                await lazerLibrary.ensureClosed();
+            } catch (e) {
+                this.notifications.error(e instanceof Error ? e.message : String(e));
+                return null;
+            }
+        }
         const pending = this.imports.get(set.sid);
         if (pending) return pending;
         const task = this.downloads.download(set.sid, { title: set.title, artist: set.artist }, { withVideo: opts.video ?? this.settings.backgroundVideo.value });
@@ -581,7 +605,7 @@ export class Game {
             n.text.value = `Importing ${task.title}…`;
             n.progress.value = NaN;
             // Import runs in downloadSet; however long a big set takes.
-            const set = (await this.imports.get(task.sid)) ?? this.library.get(`osu-${task.sid}`) ?? null;
+            const set = (await this.imports.get(task.sid)) ?? this.library.byOnlineId(task.sid) ?? null;
             if (set) n.complete(`Downloaded ${set.artist} - ${set.title}`, () => this.selectAndShow(set));
             else n.fail(`Import failed: ${task.title}`);
         }).catch(() => sync());
@@ -628,6 +652,20 @@ export class Game {
 
     /** Watch a saved score's replay; false when it has none or it can't be read. */
     async watchScore(selection: Selection, score: ScoreRecord): Promise<boolean> {
+        if (score.source) {
+            // Another client's score (osu!lazer): its replay is an .osr there.
+            const osr = await this.scores.externalOsr(score);
+            try {
+                if (!osr) throw new Error('missing');
+                const r = decodeOsr(osr);
+                this.watchReplay(selection, { events: r.events, mods: [...r.mods], mechanics: r.mechanics, player: r.player || score.player, date: r.date });
+                return true;
+            } catch (e) {
+                console.warn('[replay] external replay failed', e);
+                this.notifications.error("This score's replay could not be read.");
+                return false;
+            }
+        }
         const data = score.hasReplay && score.id !== undefined ? await this.scores.replay(score.id) : null;
         let events = null;
         try {
@@ -650,6 +688,61 @@ export class Game {
         return true;
     }
 
+    /**
+     * Save a play as an osu! .osr (lazer's LegacyScoreExporter). The
+     * desktop app writes it to ~/.wosu/Replays; the browser downloads it.
+     */
+    async exportOsr(selection: Selection, score: Omit<OsrScore, 'beatmapMd5'>): Promise<void> {
+        try {
+            let md5 = selection.diff.md5;
+            if (!md5) {
+                // osu! finds the beatmap by the .osu file's MD5.
+                const archive = await this.library.openArchive(selection.set.key);
+                md5 = md5Hex(await archive.readBytes(selection.diff.file));
+            }
+            this.saveReplayFile(selection, score.player, score.date, encodeOsr({ ...score, beatmapMd5: md5 }));
+        } catch (e) {
+            console.warn('replay export failed', e);
+            this.notifications.error(`Couldn't export the replay: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
+    /** Hand an .osr to the browser's download (the desktop shell files it under ~/.wosu/Replays). */
+    saveReplayFile(selection: Selection, player: string, date: number, osr: Uint8Array<ArrayBuffer>): void {
+        const d = new Date(date);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
+        const { set, diff } = selection;
+        const name = `${player || 'Guest'} - ${set.artist} - ${set.title} [${diff.version}] (${stamp}).osr`.replace(/[\\/:*?"<>|]/g, '_');
+        const url = URL.createObjectURL(new Blob([osr], { type: 'application/octet-stream' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    }
+
+    /** Watch an .osr file (from osu!stable, lazer or wosu!): finds its beatmap by MD5. */
+    async openReplayFile(file: Blob & { name?: string }): Promise<boolean> {
+        const label = file.name ?? 'replay';
+        try {
+            const r = decodeOsr(new Uint8Array(await file.arrayBuffer()));
+            if (r.mode !== 0) throw new Error('only osu!standard replays can be watched');
+            const hit = await this.library.findByMd5(r.beatmapMd5);
+            if (!hit) {
+                this.notifications.error(`${label}: its beatmap is not in your library.`);
+                return false;
+            }
+            const selection = { set: hit.set, diff: hit.difficulty };
+            this.openSongSelect();
+            this.watchReplay(selection, { events: r.events, mods: [...r.mods], mechanics: r.mechanics, player: r.player, date: r.date });
+            return true;
+        } catch (e) {
+            this.notifications.error(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+            return false;
+        }
+    }
+
     /** Background texture for a library set (falls back to default). */
     async setBackgroundForSet(set: LibrarySet | null): Promise<void> {
         if (!set) {
@@ -669,6 +762,11 @@ export class Game {
     }
 
     toggleFullscreen(): void {
+        // Desktop app: the window itself goes fullscreen (Settings → Graphics → Display mode).
+        if (desktopSettings) {
+            desktopSettings.toggleFullscreen();
+            return;
+        }
         try {
             if (document.fullscreenElement) void document.exitFullscreen();
             else void document.documentElement.requestFullscreen({ navigationUI: 'hide' });
@@ -689,7 +787,8 @@ export class Game {
             a.download = `wosu-${stamp}.png`;
             a.click();
             setTimeout(() => URL.revokeObjectURL(url), 5000);
-            this.notifications.success('Screenshot saved.');
+            // Desktop app: the shell reports where it was saved (clickable).
+            if (!isDesktop) this.notifications.success('Screenshot saved.');
         } catch (e) {
             console.warn('screenshot failed', e);
             this.notifications.error('Screenshot failed.');

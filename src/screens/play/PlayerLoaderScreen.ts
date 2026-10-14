@@ -1,3 +1,4 @@
+import { audioLog } from '../../debug/AudioDebug';
 import { Container, Graphics, Rectangle, type Text, type Texture } from 'pixi.js';
 import { Screen } from '../../app/Screen';
 import type { Selection } from '../../app/Game';
@@ -8,6 +9,7 @@ import { tween } from '../../core/Tweener';
 import { audioPitch, playbackRate, preservesPitch, sortedMods, withSettings, type ModSet } from '../../gameplay/mods';
 import type { ReplayInfo } from '../../gameplay/replay/Replay';
 import type { Action } from '../../input/bindings';
+import { desktopSettings } from '../../native/desktop';
 import { ModIconRow } from '../../overlays/mods/ModIcon';
 import { Checkbox } from '../../ui/Checkbox';
 import { LoadingSpinner } from '../../ui/LoadingSpinner';
@@ -84,7 +86,10 @@ export class PlayerLoaderScreen extends Screen {
         const g = this.game;
         const { set, diff } = this.selection;
         this.mods = this.replay ? withSettings(this.replay.mods, this.replay.modSettings) : g.mods.value;
-        if (g.settings.fullscreenOnPlay.value && !document.fullscreenElement) {
+        if (g.settings.fullscreenOnPlay.value && desktopSettings) {
+            // Desktop app: fullscreen the window (stays fullscreen afterwards, like the setting in osu!).
+            if (desktopSettings.displayMode.value === 'windowed') desktopSettings.toggleFullscreen();
+        } else if (g.settings.fullscreenOnPlay.value && !document.fullscreenElement) {
             // Still inside the click/keypress that started the play, so the browser allows it.
             try { void document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {}); } catch { /* unsupported */ }
         }
@@ -408,13 +413,16 @@ export class PlayerLoaderScreen extends Screen {
     /** Return the song to the menu music (it keeps playing from where gameplay left it). */
     private handBackTrack(): void {
         const track = this.track;
+        audioLog('loader.handBack', track ? `#${track.debugId} failed=${track.failed} vol=${track.volume} playing=${track.isPlaying}` : 'no track');
         this.track = null;
         if (!track) {
             this.game.music.reclaim(null, null);
             return;
         }
-        // A failed play (or a cancelled load) left the song faded out.
-        if (track.volume < 1) {
+        // A failed play left the song wound down (and filtered); a cancelled load, faded out.
+        if (track.failed) {
+            track.recoverFromFail();
+        } else if (track.volume < 1) {
             track.pause();
             track.volume = 1;
         }

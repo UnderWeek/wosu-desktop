@@ -7,6 +7,8 @@
  * The game must still run there, just without persistence, so every
  * failure to open degrades to a Map-backed database with the same API.
  */
+import { native } from '../native/native';
+import { FsDatabase } from './fsdb';
 
 export interface StoreSchema {
     name: string;
@@ -218,6 +220,8 @@ export async function openDatabase(
     schemas: readonly StoreSchema[],
     upgrade?: UpgradeFn,
 ): Promise<Database> {
+    // Desktop app: the stores are files under ~/.wosu.
+    if (native) return new FsDatabase(native, name, schemas);
     const idb = getIndexedDB();
     if (!idb) return new MemoryDatabase(schemas);
     try {

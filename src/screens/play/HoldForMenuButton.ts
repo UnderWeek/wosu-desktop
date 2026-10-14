@@ -13,6 +13,8 @@ const SIZE = 44;
  */
 export class HoldForMenuButton extends UIComponent {
     private readonly ring = new Graphics();
+    /** Hold progress the ring was last drawn at (redrawing a Graphics rebuilds Pixi's draw list). */
+    private drawnProgress = -1;
     private readonly caption: Text;
     private readonly glyph: Text;
     private held = 0;
@@ -78,6 +80,8 @@ export class HoldForMenuButton extends UIComponent {
         this.caption.alpha = Math.max(0, (this.shown - 0.4) / 0.6);
         const r = SIZE / 2 - 3;
         const p = this.holdMs > 0 ? Math.min(1, this.held / this.holdMs) : 0;
+        if (p === this.drawnProgress) return;
+        this.drawnProgress = p;
         this.ring.clear()
             .circle(SIZE / 2, SIZE / 2, r).fill({ color: 0x000000, alpha: 0.4 })
             .circle(SIZE / 2, SIZE / 2, r).stroke({ width: 2, color: 0xffffff, alpha: 0.35 });

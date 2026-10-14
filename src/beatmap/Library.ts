@@ -10,6 +10,7 @@
 import { Signal } from '../core/Signal';
 import { openAppDatabase, type AppDatabase } from '../storage/idb';
 import { migrateOnce, readLegacyData, type LegacySource } from '../storage/legacy';
+import { md5Hex } from '../core/md5';
 import { OszArchive } from './archive';
 import { parseOsu } from './parser';
 import { summarizeDifficulty } from './summary';
@@ -45,6 +46,34 @@ export interface LibrarySet {
 export interface ImportOptions {
     onlineSetId?: number;
     filename?: string;
+}
+
+/** How a set from somewhere other than a stored .osz enters the library. */
+export interface ArchiveImportOptions extends ImportOptions {
+    /** Library key (external sets are keyed by their source). */
+    key?: string;
+    sizeBytes: number;
+    /** Only these .osu files (the source already knows the ruleset). */
+    osuFiles?: readonly string[];
+    /** Star ratings by .osu file name, trusted like the online ones. */
+    stars?: ReadonlyMap<string, number>;
+    /** .osu MD5s the source already knows, by file name (else computed). */
+    md5s?: ReadonlyMap<string, string>;
+    /** Skip `changed`/`imported` (bulk sync; call `refresh()` after). */
+    quiet?: boolean;
+}
+
+/**
+ * Sets whose files live elsewhere (the desktop app's osu!lazer
+ * library): the library keeps their metadata, the source their files.
+ */
+export interface ExternalSetSource {
+    owns(key: string): boolean;
+    /** The difficulty with this .osu MD5, if the source has it. */
+    findMd5?(md5: string): { key: string; file: string } | null;
+    open(key: string): Promise<OszArchive>;
+    /** The player deleted the set in wosu!: forget it without touching the source's files. */
+    hide(key: string): Promise<void>;
 }
 
 export interface LibraryOptions {
@@ -150,6 +179,10 @@ export class BeatmapLibrary {
     private readonly archives = new Map<string, Promise<OszArchive>>();
     private readonly legacySource: LegacySource;
     private readonly makeThumbnail: (image: Blob) => Promise<Blob | null>;
+    /** Where external sets' files come from (desktop app only). */
+    external: ExternalSetSource | null = null;
+    /** When set, imported .osz files are stored there instead (desktop: "store in osu!lazer"). */
+    writer: { importOsz(data: Blob, opts: ImportOptions): Promise<LibrarySet> } | null = null;
 
     constructor(private readonly dbSource: AppDatabase | Promise<AppDatabase> = openAppDatabase(), options: LibraryOptions = {}) {
         this.legacySource = options.legacy ?? readLegacyData;
@@ -197,7 +230,13 @@ export class BeatmapLibrary {
     }
 
     has(onlineSetId: number): boolean {
-        return this.byKey.has(`osu-${onlineSetId}`);
+        return !!this.byOnlineId(onlineSetId);
+    }
+
+    /** The set with this online id: a stored .osz first, else an external copy. */
+    byOnlineId(onlineSetId: number): LibrarySet | undefined {
+        return this.byKey.get(`osu-${onlineSetId}`)
+            ?? (this.external && onlineSetId > 0 ? this.list.find(s => s.onlineSetId === onlineSetId) : undefined);
     }
 
     findByBeatmapId(beatmapId: number): { set: LibrarySet; difficulty: DifficultySummary } | undefined {
@@ -214,22 +253,34 @@ export class BeatmapLibrary {
      * content) replaces it while keeping its history fields.
      */
     async importOsz(data: Blob, opts: ImportOptions = {}): Promise<LibrarySet> {
-        await this.init();
-        const db = this.db!;
+        if (this.writer) return this.writer.importOsz(data, opts);
         let archive: OszArchive;
         try {
             archive = await OszArchive.open(data);
         } catch {
             throw new Error('Not a valid .osz archive');
         }
-        const osuFiles = archive.osuFiles();
+        return this.importArchive(archive, data, { ...opts, sizeBytes: data.size });
+    }
+
+    /**
+     * Add (or refresh) a set from an opened archive. With `data` the .osz
+     * is stored; without, the files stay with `external`.
+     */
+    async importArchive(archive: OszArchive, data: Blob | null, opts: ArchiveImportOptions): Promise<LibrarySet> {
+        await this.init();
+        const db = this.db!;
+        const osuFiles = opts.osuFiles ? [...opts.osuFiles] : archive.osuFiles();
         if (!osuFiles.length) throw new Error('No .osu files in archive');
 
         const texts: string[] = [];
         const parsed: { file: string; data: BeatmapData }[] = [];
+        const md5s = new Map<string, string>();
         for (const file of osuFiles) {
             try {
-                const text = await archive.readText(file);
+                const bytes = await archive.readBytes(file);
+                const text = new TextDecoder('utf-8').decode(bytes);
+                md5s.set(file, opts.md5s?.get(file) ?? md5Hex(bytes));
                 texts.push(text);
                 parsed.push({ file, data: parseOsu(text) });
             } catch (e) {
@@ -243,12 +294,19 @@ export class BeatmapLibrary {
         const metaSetId = std.map(p => p.data.metadata.beatmapSetId).find(id => id > 0);
         const hinted = opts.onlineSetId !== undefined && opts.onlineSetId > 0 ? opts.onlineSetId : null;
         const onlineSetId: number | null = metaSetId ?? hinted ?? setIdFromFilename(opts.filename);
-        const key = onlineSetId ? `osu-${onlineSetId}` : `local-${await contentHash(texts)}`;
+        const key = opts.key ?? (onlineSetId ? `osu-${onlineSetId}` : `local-${await contentHash(texts)}`);
         const previous = this.byKey.get(key);
 
         const previousDiffs = previous ? [...previous.difficulties, ...(previous.hidden ?? [])] : [];
         const allDifficulties = std.map(p => {
             const summary = summarizeDifficulty(p.data, p.file);
+            const md5 = md5s.get(p.file);
+            if (md5) summary.md5 = md5;
+            const sourceStars = opts.stars?.get(p.file);
+            if (sourceStars !== undefined && Number.isFinite(sourceStars) && sourceStars >= 0) {
+                summary.stars = sourceStars;
+                summary.starSource = 'online';
+            }
             // Keep official star ratings learned earlier (online lookup) on re-import.
             const known = previousDiffs.find(d =>
                 (summary.beatmapId > 0 && d.beatmapId === summary.beatmapId) || d.file === summary.file);
@@ -288,12 +346,13 @@ export class BeatmapLibrary {
             hasVideo,
             addedAt: previous?.addedAt ?? Date.now(),
             lastPlayedAt: previous?.lastPlayedAt ?? null,
-            sizeBytes: data.size,
+            sizeBytes: opts.sizeBytes,
             ...(hidden.length ? { hidden } : {}),
         };
 
         let thumbnail: Blob | null = null;
-        if (backgroundFile) {
+        // External sets get their thumbnail when first shown (getThumbnail).
+        if (backgroundFile && data) {
             try {
                 const name = archive.findImage(backgroundFile);
                 if (name) thumbnail = await this.makeThumbnail(await archive.readBlob(name, imageMime(name)));
@@ -303,17 +362,84 @@ export class BeatmapLibrary {
         }
 
         // Blob first: a set row without its files would be unplayable.
-        await db.blobs.put(data, key);
+        if (data) await db.blobs.put(data, key);
         if (thumbnail) await db.thumbs.put(thumbnail, key);
-        else await db.thumbs.delete(key);
+        else if (data || previous) await db.thumbs.delete(key);
         await db.sets.put(set, key);
 
         this.archives.delete(key);
         this.byKey.set(key, set);
+        if (!opts.quiet) {
+            this.resort();
+            this.changed.emit();
+            this.imported.emit(set);
+        }
+        return set;
+    }
+
+    private readonly md5Cache = new Map<string, string>();
+
+    /**
+     * The difficulty whose .osu file has this MD5 (replays name their map
+     * that way). Sets imported before MD5s were recorded are hashed on
+     * first use, once per session.
+     */
+    async findByMd5(md5: string): Promise<{ set: LibrarySet; difficulty: DifficultySummary } | null> {
+        await this.init();
+        const want = md5.toLowerCase();
+        const pick = (key: string, file: string) => {
+            const set = this.byKey.get(key);
+            const difficulty = set ? [...set.difficulties, ...(set.hidden ?? [])].find(d => d.file === file) : undefined;
+            return set && difficulty ? { set, difficulty } : null;
+        };
+        const ext = this.external?.findMd5?.(want);
+        if (ext) {
+            const hit = pick(ext.key, ext.file);
+            if (hit) return hit;
+        }
+        const unknown: LibrarySet[] = [];
+        for (const set of this.list) {
+            for (const d of [...set.difficulties, ...(set.hidden ?? [])]) {
+                const m = d.md5 ?? this.md5Cache.get(`${set.key}|${d.file}`);
+                if (m === want) return { set, difficulty: d };
+                if (!m && !this.external?.owns(set.key)) unknown.push(set);
+            }
+        }
+        for (const set of new Set(unknown)) {
+            try {
+                const archive = await this.openArchive(set.key);
+                for (const d of [...set.difficulties, ...(set.hidden ?? [])]) {
+                    const k = `${set.key}|${d.file}`;
+                    if (d.md5 || this.md5Cache.has(k)) continue;
+                    const m = md5Hex(await archive.readBytes(d.file));
+                    this.md5Cache.set(k, m);
+                    if (m === want) return { set, difficulty: d };
+                }
+            } catch {
+                /* unreadable set: skip */
+            }
+        }
+        return null;
+    }
+
+    /** A stored set's .osz as imported (null for external sets). */
+    async blobOf(key: string): Promise<Blob | null> {
+        await this.init();
+        return (await this.db!.blobs.get(key)) ?? null;
+    }
+
+    /** Re-sort and notify after quiet imports/removals. */
+    refresh(): void {
         this.resort();
         this.changed.emit();
-        this.imported.emit(set);
-        return set;
+    }
+
+    /** Drop an external set's row (its source no longer has it). */
+    async forget(key: string, quiet = false): Promise<void> {
+        await this.init();
+        this.archives.delete(key);
+        if (this.byKey.delete(key) && !quiet) this.refresh();
+        await Promise.all([this.db!.sets.delete(key), this.db!.thumbs.delete(key)]);
     }
 
     /** Import several files sequentially, collecting per-file errors. */
@@ -345,6 +471,7 @@ export class BeatmapLibrary {
         }
         const p = (async () => {
             await this.init();
+            if (this.external?.owns(key)) return this.external.open(key);
             const blob = await this.db!.blobs.get(key);
             if (!blob) throw new Error('Beatmap files are missing; re-import or re-download this set');
             return OszArchive.open(blob);
@@ -370,10 +497,37 @@ export class BeatmapLibrary {
     async getThumbnail(key: string): Promise<Blob | null> {
         await this.init();
         try {
-            return (await this.db!.thumbs.get(key)) ?? null;
+            const stored = await this.db!.thumbs.get(key);
+            if (stored) return stored;
         } catch {
-            return null;
+            /* fall through */
         }
+        return this.external?.owns(key) ? this.externalThumbnail(key) : null;
+    }
+
+    private readonly pendingThumbs = new Map<string, Promise<Blob | null>>();
+
+    /** External sets: made from the background on first request, then stored. */
+    private externalThumbnail(key: string): Promise<Blob | null> {
+        let p = this.pendingThumbs.get(key);
+        if (!p) {
+            p = (async () => {
+                const set = this.byKey.get(key);
+                if (!set?.backgroundFile) return null;
+                try {
+                    const archive = await this.external!.open(key);
+                    const name = archive.findImage(set.backgroundFile);
+                    if (!name) return null;
+                    const thumb = await this.makeThumbnail(await archive.readBlob(name, imageMime(name)));
+                    if (thumb) await this.db!.thumbs.put(thumb, key);
+                    return thumb;
+                } catch {
+                    return null;
+                }
+            })().finally(() => this.pendingThumbs.delete(key));
+            this.pendingThumbs.set(key, p);
+        }
+        return p;
     }
 
     /**
@@ -398,6 +552,11 @@ export class BeatmapLibrary {
 
     async delete(key: string): Promise<void> {
         await this.init();
+        if (this.external?.owns(key)) {
+            await this.external.hide(key);
+            await this.forget(key);
+            return;
+        }
         const db = this.db!;
         this.archives.delete(key);
         if (this.byKey.delete(key)) {

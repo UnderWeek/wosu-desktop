@@ -1,7 +1,9 @@
-import { lzmaCompress } from '../../core/lzma';
+import { lzmaCompress, lzmaDecompress } from '../../core/lzma';
 import { md5Hex } from '../../core/md5';
 import type { ModAcronym } from '../mods';
+import type { GameplayMechanics } from '../scoring/mechanics';
 import { BUTTON_BITS, type ReplayEvent } from './Replay';
+import type { GameplayButton } from '../input/GameplayInput';
 
 /**
  * Export to osu!'s .osr replay format (lazer's LegacyScoreEncoder, as a
@@ -173,4 +175,180 @@ export function encodeOsr(s: OsrScore): Uint8Array<ArrayBuffer> {
     w.bytes(lzmaCompress(new TextEncoder().encode(legacyFrames(s.events))));
     w.long(0n); // online score id
     return w.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Reading .osr (osu!stable and lazer replays)
+// ---------------------------------------------------------------------------
+
+/** A decoded .osr: enough to find its beatmap and watch it. */
+export interface OsrReplay extends OsrScore {
+    mode: number;
+    version: number;
+    /** lazer writes versions from 30000000 up; anything lower came from stable. */
+    mechanics: GameplayMechanics;
+}
+
+class OsrReader {
+    private pos = 0;
+    private readonly view: DataView;
+
+    constructor(private readonly data: Uint8Array) {
+        this.view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    }
+
+    private need(n: number): void {
+        if (this.pos + n > this.data.length) throw new Error('This .osr file is truncated');
+    }
+
+    byte(): number {
+        this.need(1);
+        return this.data[this.pos++];
+    }
+
+    short(): number {
+        this.need(2);
+        const v = this.view.getUint16(this.pos, true);
+        this.pos += 2;
+        return v;
+    }
+
+    int(): number {
+        this.need(4);
+        const v = this.view.getInt32(this.pos, true);
+        this.pos += 4;
+        return v;
+    }
+
+    long(): bigint {
+        this.need(8);
+        const v = this.view.getBigInt64(this.pos, true);
+        this.pos += 8;
+        return v;
+    }
+
+    string(): string {
+        const tag = this.byte();
+        if (tag === 0) return '';
+        if (tag !== 0x0b) throw new Error('Not an osu! replay (.osr)');
+        let n = 0, shift = 0, b: number;
+        do {
+            b = this.byte();
+            n |= (b & 0x7f) << shift;
+            shift += 7;
+        } while (b & 0x80);
+        this.need(n);
+        const s = new TextDecoder().decode(this.data.subarray(this.pos, this.pos + n));
+        this.pos += n;
+        return s;
+    }
+
+    bytes(n: number): Uint8Array {
+        this.need(n);
+        const out = this.data.subarray(this.pos, this.pos + n);
+        this.pos += n;
+        return out;
+    }
+}
+
+/** Legacy mod bits back to wosu!'s mods (the ones it has). */
+export function modsFromLegacyBits(bits: number): ModAcronym[] {
+    const out: ModAcronym[] = [];
+    const has = (b: number) => (bits & b) === b;
+    if (has(1)) out.push('NF');
+    if (has(2)) out.push('EZ');
+    if (has(8)) out.push('HD');
+    if (has(16)) out.push('HR');
+    if (has(16384)) out.push('PF');
+    else if (has(32)) out.push('SD');
+    if (has(512)) out.push('NC');
+    else if (has(64)) out.push('DT');
+    if (has(128)) out.push('RX');
+    if (has(256)) out.push('HT');
+    if (has(1024)) out.push('FL');
+    if (has(4096)) out.push('SO');
+    if (has(8192)) out.push('AP');
+    return out;
+}
+
+/**
+ * "w|x|y|z" frames to wosu! events: held buttons per frame, plus a press
+ * wherever a button goes down (K1/K2 also set their mouse bit in osu!'s
+ * format; a key wins over the mouse button it shadows).
+ */
+export function framesToEvents(text: string): ReplayEvent[] {
+    const events: ReplayEvent[] = [];
+    let time = 0;
+    let held = 0;
+    let first = true;
+    for (const part of text.split(',')) {
+        if (!part) continue;
+        const [ws, xs, ys, zs] = part.split('|');
+        const w = Number(ws), x = Number(xs), y = Number(ys), z = Number(zs) | 0;
+        if (!Number.isFinite(w) || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (w === -12345) continue; // RNG seed
+        // Placeholder frames still move the clock (stable writes deltas 0 and -1),
+        // lazer's LegacyScoreDecoder skips only the frames themselves.
+        time += w;
+        if (first && x === 256 && y === -500) continue;
+        first = false;
+        let buttons = 0;
+        if (z & 4) buttons |= BUTTON_BITS.K1;
+        else if (z & 1) buttons |= BUTTON_BITS.M1;
+        if (z & 8) buttons |= BUTTON_BITS.K2;
+        else if (z & 2) buttons |= BUTTON_BITS.M2;
+        const down = buttons & ~held;
+        for (const b of ['K1', 'K2', 'M1', 'M2'] as GameplayButton[]) {
+            if (down & BUTTON_BITS[b]) events.push({ kind: 'press', time, x, y, button: b });
+        }
+        held = buttons;
+        events.push({ kind: 'frame', time, x, y, buttons });
+    }
+    return events;
+}
+
+/** .NET ticks to ms since the epoch. */
+function fromDotNetTicks(ticks: bigint): number {
+    return Number(ticks / 10000n - 62135596800000n);
+}
+
+export function decodeOsr(data: Uint8Array): OsrReplay {
+    const r = new OsrReader(data);
+    const mode = r.byte();
+    if (mode > 3) throw new Error('Not an osu! replay (.osr)');
+    const version = r.int();
+    const beatmapMd5 = r.string();
+    const player = r.string();
+    r.string(); // replay hash
+    const count300 = r.short();
+    const count100 = r.short();
+    const count50 = r.short();
+    r.short(); // gekis
+    r.short(); // katus
+    const countMiss = r.short();
+    const score = r.int();
+    const maxCombo = r.short();
+    const perfect = r.byte() !== 0;
+    const modBits = r.int();
+    r.string(); // life bar
+    const date = fromDotNetTicks(r.long());
+    const length = r.int();
+    const frames = length > 0 ? new TextDecoder().decode(lzmaDecompress(r.bytes(length))) : '';
+    return {
+        mode,
+        version,
+        mechanics: version >= 30000000 ? 'lazer' : 'stable',
+        beatmapMd5,
+        player,
+        count300,
+        count100,
+        count50,
+        countMiss,
+        score,
+        maxCombo,
+        perfect,
+        mods: modsFromLegacyBits(modBits),
+        date,
+        events: framesToEvents(frames),
+    };
 }

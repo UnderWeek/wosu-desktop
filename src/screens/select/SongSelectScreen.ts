@@ -11,9 +11,7 @@ import { audioPitch, playbackRate, preservesPitch } from '../../gameplay/mods';
 import type { Action } from '../../input/bindings';
 import { ModSelectOverlay } from '../../overlays/mods/ModSelectOverlay';
 import { collections } from '../../storage/Collections';
-import { md5Hex } from '../../core/md5';
 import { decodeReplay } from '../../gameplay/replay/Replay';
-import { encodeOsr } from '../../gameplay/replay/osr';
 import type { ScoreRecord } from '../../storage/ScoreStore';
 import { ContextMenu } from '../../ui/ContextMenu';
 import { SHEAR } from '../../ui/ShearedButton';
@@ -407,46 +405,38 @@ export class SongSelectScreen extends Screen {
     /** lazer's "Export" (LegacyScoreExporter): the score as an osu! .osr replay. */
     private async exportReplay(r: ScoreRecord): Promise<void> {
         const sel = this.current;
-        if (!sel || r.id === undefined || scoreKeyFor(sel.set, sel.diff) !== r.beatmapKey) return;
-        try {
-            const data = await this.game.scores.replay(r.id);
-            if (!data) throw new Error('this score has no replay');
-            const archive = await this.game.library.openArchive(sel.set.key);
-            // osu! finds the beatmap by the .osu file's MD5.
-            const osu = await archive.readBytes(sel.diff.file);
-            const osr = encodeOsr({
-                beatmapMd5: md5Hex(osu),
-                player: r.player || 'Guest',
-                count300: r.count300,
-                count100: r.count100,
-                count50: r.count50,
-                countMiss: r.countMiss,
-                score: r.score,
-                maxCombo: r.maxCombo,
-                perfect: r.countMiss === 0 && r.maxCombo >= sel.diff.maxCombo,
-                mods: r.mods,
-                date: r.date,
-                events: decodeReplay(data),
-            });
-            const d = new Date(r.date);
-            const pad = (n: number) => String(n).padStart(2, '0');
-            const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
-            const name = `${r.player || 'Guest'} - ${sel.set.artist} - ${sel.set.title} [${sel.diff.version}] (${stamp}).osr`.replace(/[\\/:*?"<>|]/g, '_');
-            const url = URL.createObjectURL(new Blob([osr], { type: 'application/octet-stream' }));
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = name;
-            a.click();
-            setTimeout(() => URL.revokeObjectURL(url), 10_000);
-        } catch (e) {
-            console.warn('replay export failed', e);
-            this.game.notifications.error(`Couldn't export the replay: ${e instanceof Error ? e.message : String(e)}`);
+        if (!sel || scoreKeyFor(sel.set, sel.diff) !== r.beatmapKey) return;
+        if (r.source) {
+            // Another client's score: its .osr as it is.
+            const osr = await this.game.scores.externalOsr(r);
+            if (osr) this.game.saveReplayFile(sel, r.player, r.date, new Uint8Array(osr));
+            else this.game.notifications.error("Couldn't export the replay: its file is missing.");
+            return;
         }
+        if (r.id === undefined) return;
+        const data = await this.game.scores.replay(r.id);
+        if (!data) {
+            this.game.notifications.error("Couldn't export the replay: this score has no replay.");
+            return;
+        }
+        await this.game.exportOsr(sel, {
+            player: r.player || 'Guest',
+            count300: r.count300,
+            count100: r.count100,
+            count50: r.count50,
+            countMiss: r.countMiss,
+            score: r.score,
+            maxCombo: r.maxCombo,
+            perfect: r.countMiss === 0 && r.maxCombo >= sel.diff.maxCombo,
+            mods: r.mods,
+            date: r.date,
+            events: decodeReplay(data),
+        });
     }
 
     /** lazer's LocalScoreDeleteDialog. */
     private async confirmDeleteScore(r: ScoreRecord): Promise<void> {
-        if (r.id === undefined) return;
+        if (!this.game.scores.canDelete(r)) return;
         const ok = await this.game.dialog.confirm({
             title: 'Delete this score?',
             text: `${r.player || 'Guest'}'s ${(r.accuracy * 100).toFixed(2)}% play on ${r.title} [${r.version}] will be deleted, along with its replay.`,
@@ -455,7 +445,12 @@ export class SongSelectScreen extends Screen {
             danger: true,
             icon: 'trash',
         });
-        if (ok) await this.game.scores.delete(r.id);
+        if (!ok) return;
+        try {
+            await this.game.scores.deleteRecord(r);
+        } catch (e) {
+            this.game.notifications.error(e instanceof Error ? e.message : String(e));
+        }
     }
 
     // ------------------------------------------------------------------

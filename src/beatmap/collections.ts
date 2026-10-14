@@ -14,6 +14,8 @@ export interface BeatmapCollection {
     /** Member difficulties as `collectionItemKey` strings, in insertion order. */
     items: string[];
     createdAt: number;
+    /** Mirrored from another client: the members it had at the last sync (only newer ones get added). */
+    external?: string[];
 }
 
 /** lazer's TernaryState for a set's membership in a collection. */
@@ -61,7 +63,8 @@ export function sanitizeCollections(raw: unknown): BeatmapCollection[] {
         ids.add(id);
         const items = Array.isArray(o.items) ? [...new Set(o.items.filter((x): x is string => typeof x === 'string' && x.length > 0))] : [];
         const createdAt = typeof o.createdAt === 'number' && Number.isFinite(o.createdAt) ? o.createdAt : 0;
-        out.push({ id, name, items, createdAt });
+        const external = Array.isArray(o.external) ? o.external.filter((x): x is string => typeof x === 'string') : null;
+        out.push(external ? { id, name, items, createdAt, external } : { id, name, items, createdAt });
     }
     return out;
 }

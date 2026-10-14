@@ -303,4 +303,6 @@ export interface DifficultySummary {
     stars: number | null;
     /** Where `stars` came from: computed locally, or the mirror's official value. */
     starSource?: 'local' | 'online';
+    /** MD5 of the .osu file (how replays and other clients name a beatmap); absent on older imports. */
+    md5?: string;
 }

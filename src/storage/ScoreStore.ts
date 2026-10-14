@@ -44,6 +44,23 @@ export interface ScoreRecord {
     mechanics?: GameplayMechanics;
     /** A replay is stored for this score (see `replay`). */
     hasReplay?: boolean;
+    /**
+     * Listed from another client (osu!lazer's realm, desktop app): not
+     * stored here, cannot be deleted here; its replay is an .osr there.
+     */
+    source?: 'lazer';
+    /** The source's handle for the replay (lazer: the .osr file's hash). */
+    sourceRef?: string;
+    /** The source's id for the score itself (lazer: its Score ID). */
+    sourceId?: string;
+}
+
+/** Scores that live in another client (see `ScoreStore.setExternal`). */
+export interface ExternalScoreSource {
+    /** The replay as the source keeps it: an osu! .osr file. */
+    osr(record: ScoreRecord): Promise<Uint8Array | null>;
+    /** Present when the source lets scores be deleted from here. */
+    deleteScore?(record: ScoreRecord): Promise<void>;
 }
 
 /**
@@ -156,9 +173,22 @@ export class ScoreStore {
         }, this.legacySource);
     }
 
+    /**
+     * When set, new scores go there first (desktop: "store in osu!lazer");
+     * it resolves false to have this store keep the score instead.
+     */
+    writer: { add(record: ScoreRecord, replay?: Uint8Array): Promise<boolean> } | null = null;
+
     /** Persist a new record, with its encoded replay if any; resolves with it (id assigned). */
     async add(record: ScoreRecord, replay?: Uint8Array): Promise<ScoreRecord> {
         await this.init();
+        if (this.writer) {
+            try {
+                if (await this.writer.add(record, replay)) return { ...record, hasReplay: !!replay, source: 'lazer' };
+            } catch (e) {
+                console.warn('[scores] external save failed; keeping it here', e);
+            }
+        }
         const rec: ScoreRecord = { ...record, mods: [...record.mods] };
         delete rec.id;
         delete rec.hasReplay;
@@ -183,10 +213,55 @@ export class ScoreStore {
         return rec;
     }
 
+    private external: ScoreRecord[] = [];
+    private externalSource: ExternalScoreSource | null = null;
+
+    /** Replace the scores listed from another client (they are never stored here). */
+    setExternal(source: ExternalScoreSource | null, records: readonly ScoreRecord[]): void {
+        this.externalSource = source;
+        this.external = records.map(r => ({ ...r, source: r.source ?? 'lazer', hasReplay: true }));
+        this.removed.emit();
+    }
+
+    /** An external score's .osr (null for local scores or a missing file). */
+    async externalOsr(record: ScoreRecord): Promise<Uint8Array | null> {
+        if (!record.source || !this.externalSource) return null;
+        try {
+            return await this.externalSource.osr(record);
+        } catch (e) {
+            console.warn('[scores] external replay load failed', e);
+            return null;
+        }
+    }
+
+    /** Whether this record can be deleted (local ones always; external ones when the source allows it). */
+    canDelete(record: ScoreRecord): boolean {
+        return record.source ? !!this.externalSource?.deleteScore && this.externalDeletable : record.id !== undefined;
+    }
+
+    /** Set by the owner of the external source: deleting its scores is allowed right now. */
+    externalDeletable = false;
+
+    /** Delete a local or (where allowed) external record. */
+    async deleteRecord(record: ScoreRecord): Promise<void> {
+        if (record.source) {
+            if (!this.externalSource?.deleteScore) return;
+            await this.externalSource.deleteScore(record);
+            this.external = this.external.filter(r => r !== record && !(r.sourceId && r.sourceId === record.sourceId));
+            this.removed.emit();
+            return;
+        }
+        if (record.id !== undefined) await this.delete(record.id);
+    }
+
+    private get everything(): ScoreRecord[] {
+        return this.external.length ? [...this.records, ...this.external] : this.records;
+    }
+
     /** Scores on one difficulty, best first (ties: older first). */
     async forBeatmap(key: string): Promise<ScoreRecord[]> {
         await this.init();
-        return this.records
+        return this.everything
             .filter(r => r.beatmapKey === key)
             .sort((a, b) => b.score - a.score || a.date - b.date);
     }
@@ -199,7 +274,7 @@ export class ScoreStore {
     /** Most recent plays, newest first. */
     async recent(limit = 50): Promise<ScoreRecord[]> {
         await this.init();
-        return [...this.records].sort((a, b) => b.date - a.date).slice(0, limit);
+        return [...this.everything].sort((a, b) => b.date - a.date).slice(0, limit);
     }
 
     async all(): Promise<ScoreRecord[]> {

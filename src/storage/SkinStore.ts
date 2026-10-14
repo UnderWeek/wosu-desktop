@@ -7,6 +7,8 @@
  * Skins live in their own database so the app database's schema (and
  * version) stays untouched.
  */
+import { zipSync } from 'fflate';
+import { OszArchive } from '../beatmap/archive';
 import { Signal } from '../core/Signal';
 import { openDatabase, type Database, type KeyValueStore, type StoreSchema } from './idb';
 
@@ -44,6 +46,14 @@ function isStoredSkin(v: unknown): v is StoredSkin {
     return !!s && typeof s.id === 'string' && typeof s.name === 'string';
 }
 
+/** Skins whose files live elsewhere (the desktop app's osu!lazer skins). */
+export interface ExternalSkinSource {
+    owns(id: string): boolean;
+    open(id: string): Promise<OszArchive>;
+    /** Deleted in wosu!: forget it without touching the source's files. */
+    hide(id: string): Promise<void>;
+}
+
 export class SkinStore {
     readonly changed = new Signal<[]>();
     private readonly byId = new Map<string, StoredSkin>();
@@ -51,6 +61,8 @@ export class SkinStore {
     private rows: KeyValueStore<string, StoredSkin> | null = null;
     private files: KeyValueStore<string, Blob> | null = null;
     private ready: Promise<void> | null = null;
+    private external: ExternalSkinSource | null = null;
+    private externalPending: Promise<unknown> | null = null;
 
     constructor(private readonly dbSource: Database | Promise<Database> = openSkinDatabase()) {}
 
@@ -101,11 +113,59 @@ export class SkinStore {
 
     async blob(id: string): Promise<Blob | null> {
         await this.init();
+        if (this.external?.owns(id)) {
+            // Exported as an .osk built from the source's files.
+            const archive = await this.external.open(id);
+            const files: Record<string, Uint8Array> = {};
+            for (const f of archive.files) files[f] = await archive.readBytes(f);
+            return new Blob([zipSync(files, { level: 0 }) as Uint8Array<ArrayBuffer>], { type: 'application/octet-stream' });
+        }
         return (await this.files!.get(id)) ?? null;
+    }
+
+    /** A skin's files, ready to load. */
+    async openArchive(id: string): Promise<OszArchive | null> {
+        await this.init();
+        if (this.external?.owns(id)) return this.external.open(id);
+        const blob = (await this.files!.get(id)) ?? null;
+        return blob ? OszArchive.open(blob) : null;
+    }
+
+    /** Hold skin lookups until an external source has listed its skins (a selected one may be among them). */
+    deferUntil(p: Promise<unknown>): void {
+        const pending = p.catch(() => {}).finally(() => {
+            if (this.externalPending === pending) this.externalPending = null;
+        });
+        this.externalPending = pending;
+    }
+
+    /** An external source is still listing its skins (see `deferUntil`). */
+    get externalPendingPromise(): Promise<unknown> | null {
+        return this.externalPending;
+    }
+
+    /**
+     * Replace the external skins (rows are kept in memory only; the
+     * source lists them again each launch).
+     */
+    setExternal(source: ExternalSkinSource | null, rows: readonly StoredSkin[]): void {
+        for (const id of [...this.byId.keys()]) if (this.external?.owns(id)) this.byId.delete(id);
+        this.external = source;
+        for (const row of rows) this.byId.set(row.id, row);
+        this.resort();
+        this.changed.emit();
     }
 
     async delete(id: string): Promise<void> {
         await this.init();
+        if (this.external?.owns(id)) {
+            await this.external.hide(id);
+            if (this.byId.delete(id)) {
+                this.resort();
+                this.changed.emit();
+            }
+            return;
+        }
         if (this.byId.delete(id)) {
             this.resort();
             this.changed.emit();

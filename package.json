@@ -1,14 +1,17 @@
 {
   "name": "wosu",
   "version": "1.0.0",
-  "description": "wosu! — a browser osu!standard client rendered entirely with PixiJS (WebGL/WebGPU).",
+  "description": "wosu! \u2014 a browser osu!standard client rendered entirely with PixiJS (WebGL/WebGPU).",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "desktop": "npm run build && electron .",
+    "desktop:dev": "WOSU_DEV_URL=http://localhost:5173 electron .",
+    "dist:mac": "npm run build && electron-builder --mac zip dir --publish never"
   },
   "repository": {
     "type": "git",
@@ -25,10 +28,13 @@
     "@fortawesome/fontawesome-free": "^6.7.2",
     "@vercel/analytics": "^2.0.1",
     "fflate": "^0.8.3",
-    "pixi.js": "^8.22.0"
+    "pixi.js": "^8.22.0",
+    "realm": "^20.2.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.9.3",
     "vite": "^8.3.4",
     "vitest": "^5.0.3"
@@ -36,5 +42,58 @@
   "private": true,
   "engines": {
     "node": ">=22"
+  },
+  "main": "electron/main.cjs",
+  "productName": "wosu!",
+  "wosuDesktop": {
+    "updateRepo": "UnderWeek/wosu-desktop"
+  },
+  "build": {
+    "appId": "icu.dino.wosu",
+    "productName": "wosu!",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!dist/**/*.map",
+      "!node_modules/realm/prebuilds/android/**",
+      "!node_modules/realm/prebuilds/apple/**",
+      "!node_modules/realm/react-native/**",
+      "!node_modules/realm/binding/**",
+      "!node_modules/realm/bindgen/**"
+    ],
+    "asar": false,
+    "fileAssociations": [
+      {
+        "ext": "osz",
+        "name": "osu! beatmap",
+        "role": "Viewer"
+      },
+      {
+        "ext": "osk",
+        "name": "osu! skin",
+        "role": "Viewer"
+      },
+      {
+        "ext": "osr",
+        "name": "osu! replay",
+        "role": "Viewer"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.music-games",
+      "target": [
+        "zip",
+        "dir"
+      ],
+      "icon": "build/icon.png",
+      "identity": null,
+      "artifactName": "wosu-${version}-${arch}-mac.${ext}"
+    },
+    "afterPack": "electron/afterPack.cjs"
   }
 }

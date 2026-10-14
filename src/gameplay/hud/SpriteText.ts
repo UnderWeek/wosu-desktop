@@ -1,4 +1,4 @@
-import { Container, Sprite } from 'pixi.js';
+import { Container, Rectangle, Sprite, Texture } from 'pixi.js';
 import type { SkinTexture } from '../../skin/LegacySkin';
 import type { SkinChain } from '../../skin/SkinChain';
 import { SKIN_DEFAULTS } from '../../skin/SkinIni';
@@ -8,6 +8,87 @@ export type LegacyFontKind = 'score' | 'combo';
 
 /** Characters a fixed-width font keeps at their own width (lazer's FixedWidthExcludeCharacters). */
 const FIXED_WIDTH_EXCLUDE = new Set([',', '.', '%', 'x']);
+
+/** Every glyph a HUD font is drawn with. */
+const FONT_CHARS = '0123456789,.%x';
+
+/**
+ * A skin font's glyphs repacked into one texture. Skins ship each glyph
+ * as its own image, so a rolling score swaps texture sources every frame,
+ * which Pixi cannot patch into the existing batch: it rebuilds the whole
+ * scene's draw list instead (most of a gameplay frame's CPU time). Frames
+ * of one shared source swap in place.
+ *
+ * Cached by the glyph images they were made from: the HUD and its skin
+ * chain are rebuilt every play, the skins themselves are not.
+ */
+const atlases = new Map<string, Map<string, SkinTexture | null>>();
+const MAX_ATLASES = 4;
+
+function atlasFor(glyphs: Map<string, SkinTexture | null>): Map<string, SkinTexture | null> {
+    const key = [...glyphs.values()].map(g => g ? `${g.texture.source.uid}:${g.texture.frame.x},${g.texture.frame.y}` : '-').join('|');
+    let packed = atlases.get(key);
+    if (packed) {
+        atlases.delete(key);
+        atlases.set(key, packed);
+        return packed;
+    }
+    packed = packGlyphs(glyphs);
+    atlases.set(key, packed);
+    while (atlases.size > MAX_ATLASES) {
+        const [oldKey, old] = atlases.entries().next().value!;
+        atlases.delete(oldKey);
+        // Only atlases made here own their source; an unpacked map holds the skin's own textures.
+        for (const g of old.values()) if (g && packedSources.has(g.texture.source)) g.texture.destroy(false);
+        for (const g of old.values()) if (g && packedSources.delete(g.texture.source)) g.texture.source.destroy();
+    }
+    return packed;
+}
+
+/** Texture sources created by packGlyphs (safe to destroy on eviction). */
+const packedSources = new Set<unknown>();
+
+type Drawable = ImageBitmap | HTMLImageElement | HTMLCanvasElement | OffscreenCanvas;
+
+function packGlyphs(glyphs: Map<string, SkinTexture | null>): Map<string, SkinTexture | null> {
+    const items: { ch: string; g: SkinTexture; res: Drawable; sx: number; sy: number; w: number; h: number }[] = [];
+    for (const [ch, g] of glyphs) {
+        if (!g) continue;
+        const t = g.texture;
+        const res = t.source.resource as Drawable | undefined;
+        // Rotated or trimmed atlas frames would need more than a plain copy: keep the originals.
+        if (!res || typeof (res as { width?: unknown }).width !== 'number' || t.rotate || t.trim) return glyphs;
+        const r = t.source.pixelWidth / t.source.width || 1;
+        items.push({ ch, g, res, sx: t.frame.x * r, sy: t.frame.y * r, w: Math.round(t.frame.width * r), h: Math.round(t.frame.height * r) });
+    }
+    if (items.length < 2 || typeof document === 'undefined') return glyphs;
+    const PAD = 2;
+    const width = items.reduce((a, it) => a + it.w + PAD, PAD);
+    const height = Math.max(...items.map(it => it.h)) + PAD * 2;
+    if (width > 8192 || height > 8192) return glyphs;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return glyphs;
+    let x = PAD;
+    const placed: { it: (typeof items)[number]; x: number }[] = [];
+    for (const it of items) {
+        ctx.drawImage(it.res, it.sx, it.sy, it.w, it.h, x, PAD, it.w, it.h);
+        placed.push({ it, x });
+        x += it.w + PAD;
+    }
+    const source = Texture.from(canvas).source;
+    packedSources.add(source);
+    const out = new Map(glyphs);
+    for (const { it, x: px } of placed) {
+        // Same size in texture units as the original, so layouts don't change.
+        const texture = new Texture({ source, frame: new Rectangle(px, PAD, it.w, it.h) });
+        const scale = it.g.scale * (it.g.texture.frame.width / it.w || 1);
+        out.set(it.ch, { texture, scale });
+    }
+    return out;
+}
 
 /**
  * A skin's score or combo font (lazer's LegacyGlyphStore + GetFontPrefix /
@@ -35,6 +116,10 @@ export class LegacyFont {
             }
         }
         this.overlap = overlap;
+        const prefix = kind === 'score' ? 'scorePrefix' : 'comboPrefix';
+        const glyphs = new Map<string, SkinTexture | null>();
+        for (const ch of FONT_CHARS) glyphs.set(ch, chain.glyph(prefix, ch));
+        for (const [ch, g] of atlasFor(glyphs)) this.cache.set(ch, g);
     }
 
     glyph(ch: string): SkinTexture | null {

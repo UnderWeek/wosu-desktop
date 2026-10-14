@@ -1,5 +1,10 @@
 import { inject } from '@vercel/analytics';
 import { Game } from './app/Game';
+import { audioDebugState, installAudioDebug } from './debug/AudioDebug';
+import { installInputDebug } from './debug/InputDebug';
+import { showDevBadge } from './native/DevBadge';
+import { isDesktop } from './native/desktop';
+import { native } from './native/native';
 
 /**
  * Entry point: the whole game (menus included) is one PixiJS application
@@ -7,12 +12,18 @@ import { Game } from './app/Game';
  */
 async function main(): Promise<void> {
     // Vercel Web Analytics (page views only; a no-op in development).
-    inject();
+    // (not in the desktop app, which has no Vercel endpoint).
+    if (!isDesktop) inject();
     const host = document.getElementById('app');
     if (!host) throw new Error('#app host element missing');
     try {
+        // Desktop app: on screen from launch to quit.
+        if (isDesktop) showDevBadge(__BUILD_INFO__);
+        installAudioDebug();
+        installInputDebug();
         const game = await Game.boot(host);
-        if (import.meta.env.DEV) (window as unknown as { game: Game }).game = game;
+        audioDebugState(() => `${game.music.debugState()}\nscreens: ${game.screens.screens.map(s => s.constructor.name).join(' > ')}`);
+        if (import.meta.env.DEV || native?.debug) (window as unknown as { game: Game }).game = game;
     } catch (e) {
         console.error('failed to start', e);
         showFatal(host, e);

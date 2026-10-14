@@ -2,6 +2,7 @@ import { Application, Container, type Renderer } from 'pixi.js';
 import { Signal } from '../core/Signal';
 import { tweener } from '../core/Tweener';
 import { frame, frameStats, scene } from '../core/frame';
+import { desktopSettings } from '../native/desktop';
 
 export type RendererPreference = 'auto' | 'webgl' | 'webgpu';
 export type RendererKind = 'webgl' | 'webgpu';
@@ -144,12 +145,17 @@ export class App {
         this.queueResize();
     }
 
+    /** The pixel ratio rule changed (desktop Retina toggle): re-apply. */
+    refreshResolution(): void {
+        this.queueResize();
+    }
+
     setMaxFps(fps: number): void {
         this.pixi.ticker.maxFPS = fps > 0 ? fps : 0;
     }
 
     private targetResolution(): number {
-        const dpr = window.devicePixelRatio || 1;
+        const dpr = pixelRatio();
         return Math.max(0.5, Math.min(3, dpr * this.resolutionScale));
     }
 
@@ -219,4 +225,14 @@ async function webGpuAvailable(): Promise<boolean> {
     } catch {
         return false;
     }
+}
+
+/**
+ * Device pixels per CSS pixel the game renders at. The desktop app can
+ * ignore Retina density (Settings → Graphics → Retina resolution), so the
+ * canvas is 1 pixel per point and macOS upscales it, as osu!lazer does.
+ */
+export function pixelRatio(): number {
+    const dpr = globalThis.devicePixelRatio || 1;
+    return desktopSettings && !desktopSettings.hidpi.value ? 1 : dpr;
 }
