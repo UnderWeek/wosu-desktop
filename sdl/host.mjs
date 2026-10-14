@@ -498,6 +498,21 @@ g.ImageBitmap = Object;
 // Canvas 2D drawImage must accept our bitmaps and canvases.
 const proto2d = Object.getPrototypeOf(createCanvas(1, 1).getContext('2d'));
 g.CanvasRenderingContext2D = proto2d.constructor;
+
+// Browsers fall back to system fonts for glyphs a font lacks (Exo 2 has no ★); Skia only
+// does if the families are listed. Append macOS's symbol fonts to every font the game sets.
+const FALLBACK_FONTS = ', "Apple Symbols", "Arial Unicode MS", "Apple Color Emoji", sans-serif';
+const fontDesc = Object.getOwnPropertyDescriptor(proto2d, 'font');
+if (fontDesc?.set) {
+    Object.defineProperty(proto2d, 'font', {
+        configurable: true,
+        get: fontDesc.get,
+        set(v) {
+            const s = String(v);
+            fontDesc.set.call(this, s.includes('Apple Symbols') ? s : s + FALLBACK_FONTS);
+        },
+    });
+}
 const drawImage = proto2d.drawImage;
 proto2d.drawImage = function (src, ...a) {
     return drawImage.call(this, src?.__image ?? src?.__skia ?? src, ...a);
