@@ -376,7 +376,14 @@ class FontFaceShim {
         const m = /url\(["']?([^"')]+)["']?\)/.exec(String(this.source));
         if (m) {
             const res = await g.fetch(m[1]);
-            GlobalFonts.register(Buffer.from(await res.arrayBuffer()), this.family);
+            let ok = GlobalFonts.register(Buffer.from(await res.arrayBuffer()), this.family);
+            // Skia here takes TTF/OTF, not WOFF2: use the package's TTF of the same font.
+            if (!ok && /\.woff2$/i.test(m[1])) {
+                const base = path.basename(m[1]).replace(/-[A-Za-z0-9_]{6,}(?=\.woff2$)/, '').replace(/\.woff2$/i, '.ttf');
+                const ttf = path.resolve(HERE, '..', 'node_modules', '@fortawesome', 'fontawesome-free', 'webfonts', base);
+                if (fs.existsSync(ttf)) ok = GlobalFonts.registerFromPath(ttf, this.family);
+            }
+            if (!ok) console.warn(`[sdl] font ${this.family} could not be registered (${m[1]})`);
         }
         this.status = 'loaded';
         return this;
@@ -549,3 +556,24 @@ if (!entry) throw new Error('no entry script in dist/index.html');
 setImmediate(frame);
 await import(pathToFileURL(path.join(DIST, entry)).href);
 console.log('[sdl] game module loaded:', entry);
+
+/**
+ * AUTOPLAY=1 (with WOSU_DEBUG=1 so the game exposes window.game): skip the
+ * intro, start Autoplay on a dense map, and let the fps lines show gameplay.
+ * The same map as the Electron profile: the most objects among 5-6.5* maps over 100 s.
+ */
+if (process.env.AUTOPLAY) {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    for (let i = 0; i < 100 && !(g.game && g.game.library.sets.length > 100); i++) await sleep(300);
+    const game = g.game;
+    if (!game) throw new Error('AUTOPLAY needs WOSU_DEBUG=1');
+    game.screens.current?.begin?.();
+    await sleep(2500);
+    const c = [];
+    for (const set of game.library.sets) for (const d of set.difficulties) if (d.stars >= 5 && d.stars <= 6.5 && d.length > 100000 && d.circles + d.sliders > 600) c.push({ set, d });
+    c.sort((a, b) => (b.d.circles + b.d.sliders) - (a.d.circles + a.d.sliders));
+    const pick = c[Math.floor(c.length / 3)];
+    console.log(`[sdl] autoplay: ${pick.set.artist} - ${pick.set.title} [${pick.d.version}] ${pick.d.stars.toFixed(2)}*`);
+    game.mods.value = new Set(['AT']);
+    game.play({ set: pick.set, diff: pick.d });
+}
