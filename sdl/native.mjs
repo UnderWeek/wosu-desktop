@@ -34,7 +34,12 @@ const call = ch => async (...args) => {
 const noopListen = () => () => {};
 
 export function createNative({ onConfigChange } = {}) {
+    const openFileListeners = new Set();
     return {
+        /** Host side: hand a dropped/opened file to the game (it imports or watches it). */
+        openFile(f) {
+            for (const fn of openFileListeners) fn(f);
+        },
         platform: process.platform,
         debug: !!process.env.WOSU_DEBUG,
         db: {
@@ -57,7 +62,10 @@ export function createNative({ onConfigChange } = {}) {
         relaunch: async () => process.exit(0),
         onMenu: noopListen,
         onFileSaved: noopListen,
-        onOpenFile: noopListen,
+        onOpenFile: fn => {
+            openFileListeners.add(fn);
+            return () => openFileListeners.delete(fn);
+        },
         showInFolder: async p => { execFile('/usr/bin/open', ['-R', p]); },
         setPlaying: () => {},
         setDockProgress: () => {},
