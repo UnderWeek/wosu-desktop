@@ -383,16 +383,26 @@ class GPUCanvasContextShim {
                 format: this.cfg.format,
                 usage: gpu.GPUTextureUsage.RENDER_ATTACHMENT | gpu.GPUTextureUsage.TEXTURE_BINDING | gpu.GPUTextureUsage.COPY_SRC | gpu.GPUTextureUsage.COPY_DST,
             });
+            this.clearView = this.texture.createView();
             this.bindGroup = this.device.createBindGroup({
                 layout: this.pipeline.getBindGroupLayout(0),
                 entries: [{ binding: 0, resource: this.texture.createView() }, { binding: 1, resource: this.sampler }],
             });
+        }
+        // Clear once per frame ourselves: at fractional render resolutions Pixi leaves the last
+        // column(s) untouched, which kept showing an old frame as a strip at the right edge.
+        if (!this.clearedThisFrame) {
+            this.clearedThisFrame = true;
+            const enc = this.device.createCommandEncoder();
+            enc.beginRenderPass({ colorAttachments: [{ view: this.clearView, clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }] }).end();
+            this.device.queue.submit([enc.finish()]);
         }
         textureTaken = true;
         return this.texture;
     }
     /** Draw this frame's canvas onto the window and show it. */
     present() {
+        this.clearedThisFrame = false;
         if (!this.texture) return;
         const enc = this.device.createCommandEncoder();
         const pass = enc.beginRenderPass({
@@ -892,6 +902,17 @@ if (!entry) throw new Error('no entry script in dist/index.html');
 setImmediate(frame);
 await import(pathToFileURL(path.join(DIST, entry)).href);
 console.log('[sdl] game module loaded:', entry);
+
+// TRACE=1 (with WOSU_DEBUG=1): when the game gets its first screen, and every screen change after.
+if (process.env.TRACE) {
+    const t0 = performance.now();
+    const log = msg => console.log(`[trace] +${Math.round(performance.now() - t0)} ms ${msg}`);
+    void (async () => {
+        for (let i = 0; i < 400 && !g.game; i++) await new Promise(r => setTimeout(r, 25));
+        log('game object ready');
+        g.game?.screens.changed.add(cur => log(`screen → ${cur?.constructor?.name ?? 'none'} (stack ${g.game.screens.screens.length})`));
+    })();
+}
 
 /**
  * AUTOPLAY=1 (with WOSU_DEBUG=1 so the game exposes window.game): skip the
