@@ -12,3 +12,4 @@ test-results/
 .claude/
 .vercel/
 release/
+sdl/node_modules/
