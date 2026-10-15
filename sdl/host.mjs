@@ -1058,12 +1058,17 @@ try {
 g.wosuNative = createNative({ onConfigChange: c => applyDisplayMode(c.displayMode) });
 
 /**
- * Songs decode with osu!lazer's BASS when lazer is installed (sdl/bass-decode.c): song time 0
+ * Songs decode with BASS, the library osu! and lazer use (sdl/vendor/bass; sdl/bass-decode.c): song time 0
  * then sits exactly where lazer and stable put it on every file (BASS trims MP3 delays its own
- * way; untagged files differ by 11-22 ms from other decoders). Without lazer the game decodes
- * as before.
+ * way; untagged files differ by 11-22 ms from other decoders). Without the library the game
+ * decodes as before.
  */
-const LIBBASS = ['/Applications/osu!.app/Contents/MacOS/libbass.dylib', path.join(os.homedir(), 'Applications/osu!.app/Contents/MacOS/libbass.dylib')].find(f => fs.existsSync(f));
+const LIBBASS = [
+    // Ours (sdl/vendor/bass), then an installed osu!lazer's copy.
+    path.join(HERE, 'vendor', 'bass', process.platform, process.platform === 'win32' ? 'bass.dll' : process.platform === 'darwin' ? 'libbass.dylib' : 'libbass.so'),
+    '/Applications/osu!.app/Contents/MacOS/libbass.dylib',
+    path.join(os.homedir(), 'Applications/osu!.app/Contents/MacOS/libbass.dylib'),
+].find(f => fs.existsSync(f));
 let bassDecoder = null;
 function bassDecoderPath() {
     if (!bassDecoder) bassDecoder = (async () => {
@@ -1072,13 +1077,15 @@ function bassDecoderPath() {
         const bin = path.join(os.homedir(), '.wosu', 'cache', `bass-decode-${hash}`);
         if (!fs.existsSync(bin)) {
             fs.mkdirSync(path.dirname(bin), { recursive: true });
-            await new Promise((resolve, reject) => execFile('/usr/bin/clang', ['-O2', src, '-o', bin], err => (err ? reject(err) : resolve())));
+            const cc = process.platform === 'darwin' ? '/usr/bin/clang' : 'cc';
+            await new Promise((resolve, reject) => execFile(cc, ['-O2', src, '-o', bin, ...(process.platform === 'linux' ? ['-ldl'] : [])], err => (err ? reject(err) : resolve())));
         }
         return bin;
     })();
     return bassDecoder;
 }
-if (LIBBASS && process.platform === 'darwin') {
+// macOS and Linux (dlopen); Windows needs a LoadLibrary build of the decoder first.
+if (LIBBASS && process.platform !== 'win32' && !ANDROID) {
     void bassDecoderPath().catch(e => console.warn('[audio] BASS decoder unavailable:', e.message));
     let decodeSeq = 0;
     g.wosuNative.decodeSong = async (bytes, context) => {
@@ -1120,7 +1127,7 @@ if (LIBBASS && process.platform === 'darwin') {
         // stretch worklet, which needs the context rate, gets its own copy (MusicTrack).
         return src;
     };
-    console.log('[audio] songs decode with osu!lazer\'s BASS:', LIBBASS);
+    console.log('[audio] songs decode with BASS:', LIBBASS);
 }
 applyDisplayMode(g.wosuNative.config.initial.displayMode);
 

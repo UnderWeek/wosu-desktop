@@ -208,7 +208,7 @@ export class MusicTrack {
     private disposed = false;
 
     static async decode(engine: AudioEngine, bytes: ArrayBuffer, filename: string): Promise<MusicTrack> {
-        // Desktop host with osu!lazer installed: lazer's own decoder (BASS) puts song time 0
+        // Desktop host: BASS, the decoder osu! and lazer use, puts song time 0
         // exactly where lazer does, so nothing needs predicting.
         const decodeSong = (globalThis as { wosuNative?: { decodeSong?: (b: ArrayBuffer, c: BaseAudioContext) => Promise<AudioBuffer> } }).wosuNative?.decodeSong;
         if (decodeSong) {
