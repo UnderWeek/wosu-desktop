@@ -758,7 +758,7 @@ win.on('mouseButtonUp', e => {
 });
 // Android: each finger is its own touch pointer, timestamped by the OS.
 const touchIds = new Map();
-win.on('touch', e => {
+if (ANDROID) win.on('touch', e => {
     const type = { down: 'pointerdown', move: 'pointermove', up: 'pointerup', cancel: 'pointercancel' }[e.action];
     if (e.action === 'down') touchIds.set(e.id, touchIds.size === 0);
     const primary = touchIds.get(e.id) ?? false;
@@ -773,11 +773,11 @@ win.on('touch', e => {
     target.dispatchEvent(new hw.PointerEvent(type, { bubbles: true, cancelable: true, ...init }));
     if (e.action === 'up' || e.action === 'cancel') touchIds.delete(e.id);
 });
-win.on('surfaceLost', () => {
+if (ANDROID) win.on('surfaceLost', () => {
     surfaceReady = false;
     renderer?.release?.();
 });
-win.on('surfaceRestored', () => {
+if (ANDROID) win.on('surfaceRestored', () => {
     surfaceReady = true;
     renderer?.resize();
     surfaceSize = `${win.pixelWidth}x${win.pixelHeight}`;
