@@ -529,8 +529,22 @@ async function bitmapFrom(source) {
     const c = createCanvas(img.width, img.height);
     const ctx = c.getContext('2d');
     ctx.drawImage(img, 0, 0);
-    const data = ctx.getImageData(0, 0, img.width, img.height).data;
-    return { width: img.width, height: img.height, __rgba: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), __image: c, close() {} };
+    const imageData = ctx.getImageData(0, 0, img.width, img.height);
+    const data = imageData.data;
+    // Keep only the pixels: holding the Skia canvas too tripled every image's memory (storyboards
+    // reached 4 GB), and that native memory is invisible to the GC. Canvas 2D gets one on demand.
+    const width = img.width, height = img.height;
+    let canvas = null;
+    return {
+        width, height, __rgba: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), close() {},
+        get __image() {
+            if (!canvas) {
+                canvas = createCanvas(width, height);
+                canvas.getContext('2d').putImageData(imageData, 0, 0);
+            }
+            return canvas;
+        },
+    };
 }
 g.createImageBitmap = (source, ...rest) => {
     if (typeof rest[0] === 'object' || rest.length > 3) {
@@ -691,39 +705,6 @@ new PerformanceObserver(list => {
     for (const e of list.getEntries()) if (e.duration > 50) logStall(`gc ${e.detail?.kind ?? ''} ${e.duration.toFixed(0)}ms`);
 }).observe({ entryTypes: ['gc'] });
 let lastFrameEnd = performance.now();
-/**
- * A V8 CPU profile runs all the time (~1% at 1 ms sampling) and is cut on every screen change,
- * never mid-play (stopping one costs ~12 ms per minute it ran). When a frame stalls, the
- * profile so far is saved as ~/.wosu/logs/stall-<time>.cpuprofile. NO_STALL_PROFILE=1 turns it off.
- */
-const stallProfiler = process.env.NO_STALL_PROFILE ? null : await (async () => {
-    const { Session } = await import('node:inspector/promises');
-    const session = new Session();
-    session.connect();
-    await session.post('Profiler.enable');
-    await session.post('Profiler.setSamplingInterval', { interval: 1000 });
-    await session.post('Profiler.start');
-    let busy = false;
-    const cut = async save => {
-        if (busy) return;
-        busy = true;
-        try {
-            const { profile } = await session.post('Profiler.stop');
-            await session.post('Profiler.start');
-            if (save) {
-                const file = path.join(os.homedir(), '.wosu', 'logs', `stall-${new Date().toISOString().replace(/[:.]/g, '-')}.cpuprofile`);
-                fs.writeFile(file, JSON.stringify(profile), () => {});
-                console.warn('[stall] profile saved', file);
-            }
-        } catch (e) {
-            console.warn('[stall] profiler', e.message);
-        } finally {
-            busy = false;
-        }
-    };
-    hw.addEventListener('wosu:screenchange', () => setTimeout(() => void cut(false), 0));
-    return { stalled: () => void cut(true) };
-})();
 function frame() {
     if (win.destroyed) return;
     const t0 = performance.now();
@@ -750,7 +731,6 @@ function frame() {
     const tEnd = performance.now();
     const d = tEnd - t;
     if (tEnd - lastFrameEnd > 250) {
-        stallProfiler?.stalled();
         logStall(`frame ${(tEnd - lastFrameEnd).toFixed(0)}ms: between frames ${(t0 - lastFrameEnd).toFixed(0)}, sdl events ${(t - t0).toFixed(0)}, game ${(tRaf - t).toFixed(0)}, present ${(tEnd - tRaf).toFixed(0)}`);
     }
     lastFrameEnd = tEnd;
