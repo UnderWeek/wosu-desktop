@@ -88,7 +88,7 @@ describe('CollectionStore', () => {
         expect(third.all.map(c => c.name)).toEqual(['Aim']);
     });
 
-    it('remembers the song select filter and drops it with its collection', async () => {
+    it('starts every launch on all beatmaps and clears the filter with its collection', async () => {
         const db = createMemoryAppDatabase();
         const store = new CollectionStore(db);
         await store.init();
@@ -98,14 +98,10 @@ describe('CollectionStore', () => {
 
         const again = new CollectionStore(db);
         await again.init();
-        expect(again.filter.value).toBe(c.id);
+        expect(again.filter.value).toBe('');
+        again.filter.value = c.id;
         again.remove(c.id);
         expect(again.filter.value).toBe('');
-        await again.flush();
-
-        const third = new CollectionStore(db);
-        await third.init();
-        expect(third.filter.value).toBe('');
     });
 
     it('ignores a stored filter for a missing collection', async () => {

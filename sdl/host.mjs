@@ -194,6 +194,8 @@ for (const name of ['window', 'document', 'navigator', 'location', 'history', 'l
     } catch { /* keep Node's */ }
 }
 g.window = g;
+// window.close() (main menu → Exit): quit, after pending settings writes get a moment.
+g.close = () => setTimeout(() => process.exit(0), 150);
 // The game reads window.* and document.*; route window events through one target.
 for (const k of ['addEventListener', 'removeEventListener']) g[k] = hw[k].bind(hw);
 // Node's own Events (e.g. Vite's 'vite:preloadError') aren't happy-dom's: re-dispatch them as one.

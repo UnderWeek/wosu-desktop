@@ -17,7 +17,6 @@ import {
 import { openAppDatabase, type AppDatabase } from './idb';
 
 const KEY = 'collections';
-const FILTER_KEY = 'collectionFilter';
 /** Ids of mirrored collections the player deleted here (not brought back by the next sync). */
 const REMOVED_EXTERNAL_KEY = 'collectionsRemovedExternal';
 const EXTERNAL_PREFIX = 'lazer-';
@@ -60,9 +59,6 @@ export class CollectionStore {
     private writes: Promise<void> = Promise.resolve();
 
     constructor(private readonly dbSource: AppDatabase | Promise<AppDatabase> = openAppDatabase()) {
-        this.filter.bind(v => {
-            if (this.loaded) this.enqueue(db => db.kv.put(v, FILTER_KEY));
-        });
     }
 
     init(): Promise<void> {
@@ -81,8 +77,7 @@ export class CollectionStore {
             this.list = sanitizeCollections(await db.kv.get(KEY));
             const removed = await db.kv.get(REMOVED_EXTERNAL_KEY);
             if (Array.isArray(removed)) this.removedExternal = new Set(removed.filter((x): x is string => typeof x === 'string'));
-            const f = await db.kv.get(FILTER_KEY);
-            if (typeof f === 'string' && this.get(f)) this.filter.value = f;
+            // The filter isn't restored: every launch starts on "All beatmaps".
         } catch (e) {
             console.warn('[collections] load failed', e);
         }

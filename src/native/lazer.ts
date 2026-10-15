@@ -101,6 +101,8 @@ export class LazerLibrary implements ExternalSetSource, ExternalSkinSource, Exte
     }
 
     async open(key: string): Promise<OszArchive> {
+        // At startup the library lists lazer's sets from the last session before lazer is read again.
+        if (!this.files.has(key)) await this.firstSync.catch(() => {});
         const files = this.files.get(key);
         if (!files) throw new Error('This beatmap is no longer in osu!lazer');
         const byName = new Map(files.map(f => [f.name, f.hash]));

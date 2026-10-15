@@ -85,7 +85,7 @@ export class IntroScreen extends Screen {
         // The desktop app needs no click to unlock audio: go straight into the welcome sequence.
         if (isDesktop) {
             this.hint.visible = false;
-            this.begin();
+            this.begin(false);
         }
     }
 
@@ -113,11 +113,11 @@ export class IntroScreen extends Screen {
         return true;
     }
 
-    private begin(): void {
+    private begin(withSound = true): void {
         if (!this.waiting || !this.isCurrent) return;
         this.waiting = false;
         void this.game.audio.unlock();
-        this.game.uiSounds.play('Menu/osu-logo-select');
+        if (withSound) this.game.uiSounds.play('Menu/osu-logo-select');
         tween(this.hint, { alpha: 0 }, { duration: 200 });
         tween(this.disclaimer, { alpha: 0 }, { duration: 400 });
         tween(this.tip, { alpha: 0 }, { duration: 400 });
@@ -149,6 +149,11 @@ export class IntroScreen extends Screen {
         tween(this.welcome, { alpha: 1 }, { duration: 600 });
         this.logo.alpha = 0;
         delay(1800, () => {
+            // The desktop app quits here (the browser can't close its tab).
+            if (isDesktop) {
+                window.close();
+                return;
+            }
             tween(this.welcome, { alpha: 0 }, { duration: 500 });
             this.welcome.text = 'welcome';
             this.showWaiting();
