@@ -205,6 +205,15 @@ g.Worker = class WorkerShim extends EventTarget {
 for (const [k, v] of Object.entries(webAudio)) if (!(k in g)) g[k] = v;
 g.webkitAudioContext = g.AudioContext;
 
+// The worklet's worker thread has no wosu: loader: hand it the file in dist instead (DT/HT pitch stretch).
+{
+    const addModule = webAudio.AudioWorklet.prototype.addModule;
+    webAudio.AudioWorklet.prototype.addModule = function (url, ...rest) {
+        if (typeof url === 'string' && url.startsWith('wosu:')) url = path.join(DIST, decodeURIComponent(new URL(url).pathname));
+        return addModule.call(this, url, ...rest);
+    };
+}
+
 /**
  * node-web-audio-api panics (and Rust aborts the whole process) when a
  * source plays a buffer with no frames or channels — skins ship empty .wav
