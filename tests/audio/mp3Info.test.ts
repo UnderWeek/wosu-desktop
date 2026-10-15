@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { analyzeAudio, parseFrameHeader, predictMp3Offset, readMp3Tags } from '../../src/audio/mp3Info';
 
@@ -11,34 +10,6 @@ function toArrayBuffer(buf: Buffer): ArrayBuffer {
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
 }
 
-/**
- * The original pipeline: the old site's vendored mp3-parser (kept as a test
- * oracle in tests/fixtures/legacy) + preprocAudio/offset_predict_mp3 from
- * its osu-audio.js, replicated verbatim (offset part only).
- */
-function oldStartOffset(filename: string, buffer: ArrayBuffer): number {
-    if (filename.substr(-3) !== 'mp3') return 19;
-    const sandbox: Record<string, unknown> = {};
-    sandbox.window = sandbox;
-    vm.createContext(sandbox);
-    vm.runInContext(readFileSync(resolve(ROOT, 'tests/fixtures/legacy/mp3parse.min.js'), 'utf8'), sandbox);
-    const mp3Parser = sandbox.mp3Parser as { readTags(v: DataView): any[] };
-    const tags = mp3Parser.readTags(new DataView(buffer));
-    const defaultOffset = 22;
-    if (!tags || !tags.length) return defaultOffset;
-    const frametag = tags[tags.length - 1];
-    if (frametag._section.sampleLength != 1152) return defaultOffset;
-    let vbr: any = null;
-    for (let i = 0; i < tags.length; ++i) if (tags[i]._section.type == 'Xing') vbr = tags[i];
-    if (!vbr) return defaultOffset;
-    if (!vbr.identifier) return defaultOffset;
-    if (vbr.vbrinfo.ENC_DELAY != 576) return defaultOffset;
-    const sampleRate = vbr.header.samplingRate;
-    if (sampleRate == 32000) return 89 - 1152000 / sampleRate;
-    if (sampleRate == 44100) return 68 - 1152000 / sampleRate;
-    if (sampleRate == 48000) return 68 - 1152000 / sampleRate;
-    return defaultOffset;
-}
 
 interface SynthOptions {
     id3?: boolean;
