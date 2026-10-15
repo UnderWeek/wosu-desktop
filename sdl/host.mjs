@@ -930,9 +930,16 @@ g.wosuNative = createNative({ onConfigChange: c => applyDisplayMode(c.displayMod
 applyDisplayMode(g.wosuNative.config.initial.displayMode);
 
 /** Settings → Graphics → Display mode (and F11): SDL's desktop fullscreen for both fullscreen kinds. */
-function applyDisplayMode(mode) {
+function applyDisplayMode(mode, attempt = 0) {
     const want = mode !== 'windowed';
-    if (win.fullscreen !== want) win.setFullscreen(want);
+    if (win.fullscreen === want) return;
+    try {
+        win.setFullscreen(want);
+    } catch (e) {
+        // macOS refuses while another fullscreen transition (e.g. the last run's Space closing) is still animating.
+        if (attempt < 10) setTimeout(() => applyDisplayMode(mode, attempt + 1), 500);
+        else console.warn('[sdl] fullscreen failed', e.message);
+    }
 }
 
 // ---------------------------------------------------------------------------
