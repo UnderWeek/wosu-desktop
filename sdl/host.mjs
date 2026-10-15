@@ -16,6 +16,8 @@ import { PerformanceObserver } from 'node:perf_hooks';
 import { execFileSync } from 'node:child_process';
 import { resolveObjectURL } from 'node:buffer';
 import { registerHooks } from 'node:module';
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import gpu from '@kmamal/gpu';
@@ -31,6 +33,13 @@ const sdl = ANDROID ? (await import('../android/sdl-shim.mjs')).default : (await
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '..', 'dist');
 const ORIGIN = 'wosu://app/';
+
+// globalThis.gc: the game collects right after it frees a lot (entering gameplay). Decoded songs and
+// images are mostly native memory the GC can't see, so it would otherwise keep them for a long time.
+if (typeof globalThis.gc !== 'function') {
+    v8.setFlagsFromString('--expose-gc');
+    globalThis.gc = vm.runInNewContext('gc');
+}
 
 // The game imports its own lazy files by page URL (wosu://app/vendor/…): load them from dist.
 registerHooks({

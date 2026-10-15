@@ -1,6 +1,6 @@
 import { BlurFilter, Container, Graphics, Sprite, Texture, type Renderer } from 'pixi.js';
 import { damp } from '../core/math';
-import { tween } from '../core/Tweener';
+import { tween, tweener } from '../core/Tweener';
 
 /** Blur levels pre-rendered on demand; intermediate values crossfade. */
 const BLUR_LEVELS = [0, 0.25, 0.5, 0.75, 1];
@@ -125,6 +125,16 @@ export class BackgroundManager {
 
     get currentKey(): string | null {
         return this.layers[this.layers.length - 1]?.key ?? null;
+    }
+
+    /** Drop every background (shows black) and free its textures. */
+    clear(): void {
+        this.requestSeq++;
+        for (const l of this.layers) {
+            tweener.kill(l);
+            l.destroy();
+        }
+        this.layers = [];
     }
 
     setDefault(): void {

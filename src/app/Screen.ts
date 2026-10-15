@@ -27,6 +27,19 @@ export abstract class Screen extends UIComponent {
     readonly catchesClicks: boolean = false;
     /** Overlays (settings, listing) may be opened over this screen. */
     readonly allowOverlays: boolean = true;
+    /** While this screen is in the stack, screens below it that can be rebuilt are unloaded (gameplay). */
+    readonly unloadsScreensBelow: boolean = false;
+
+    /**
+     * A fresh copy of this screen, built when it becomes current again after
+     * being unloaded; null (the default) keeps it loaded.
+     */
+    recreate(): Screen | null {
+        return null;
+    }
+
+    /** Called just before an unload destroys this screen (cancel pending work). */
+    onUnloading(): void {}
 
     private keyOff: (() => void) | null = null;
 
@@ -87,6 +100,13 @@ export abstract class Screen extends UIComponent {
     }
 }
 
+/** Stands in for an unloaded screen until it is current again. */
+class UnloadedScreen extends Screen {
+    constructor(readonly rebuild: Screen) {
+        super();
+    }
+}
+
 export class ScreenStack {
     readonly screens: Screen[] = [];
     readonly changed = new Signal<[current: Screen | null, previous: Screen | null]>();
@@ -114,6 +134,39 @@ export class ScreenStack {
         this.activate(screen);
         screen.onEntering(prev);
         this.changed.emit(screen, prev);
+        if (screen.unloadsScreensBelow) this.unloadBelow(screen);
+    }
+
+    /** Destroy the rebuildable screens under `top`; each is built afresh when it is returned to. */
+    private unloadBelow(top: Screen): void {
+        const idx = this.screens.indexOf(top);
+        for (let i = 0; i < idx; i++) {
+            const s = this.screens[i];
+            if (s instanceof UnloadedScreen) continue;
+            const fresh = s.recreate();
+            if (!fresh) continue;
+            const stub = new UnloadedScreen(fresh);
+            stub.game = this.game;
+            stub.stack = this;
+            this.screens[i] = stub;
+            s.detachKeys();
+            s.onUnloading();
+            s.destroy({ children: true });
+        }
+    }
+
+    /** Swap an unloaded stand-in for its rebuilt screen (it enters as if new). */
+    private reload(stub: UnloadedScreen, from: Screen): Screen {
+        const screen = stub.rebuild;
+        screen.game = this.game;
+        screen.stack = this;
+        screen.load();
+        screen.resize(this.width, this.height);
+        const layer = this.game.app.screenLayer;
+        layer.addChildAt(screen, from.parent === layer ? layer.getChildIndex(from) : layer.children.length);
+        this.screens[this.screens.indexOf(stub)] = screen;
+        stub.destroy();
+        return screen;
     }
 
     /** Exit `screen` and everything above it. */
@@ -124,6 +177,11 @@ export class ScreenStack {
         while (this.screens.length - 1 > idx) this.removeTop(true);
         if (this.screens.length <= 1) return; // never exit the root screen
         this.removeTop(false);
+    }
+
+    /** The first screen matching `test`, unloaded ones included (as their stand-in, fine for makeCurrent). */
+    find(test: (screen: Screen) => boolean): Screen | undefined {
+        return this.screens.find(s => test(s instanceof UnloadedScreen ? s.rebuild : s));
     }
 
     /** Make `screen` current by exiting everything above it. */
@@ -146,8 +204,14 @@ export class ScreenStack {
         }, ms);
         top.eventMode = 'none';
         if (next && !silent) {
-            this.activate(next);
-            next.onResuming(top);
+            if (next instanceof UnloadedScreen) {
+                const screen = this.reload(next, top);
+                this.activate(screen);
+                screen.onEntering(top);
+            } else {
+                this.activate(next);
+                next.onResuming(top);
+            }
         }
         this.changed.emit(this.current, top);
     }

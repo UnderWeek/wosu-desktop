@@ -636,7 +636,7 @@ export class Game {
     }
 
     openSongSelect(): void {
-        const existing = this.screens.screens.find(s => s instanceof SongSelectScreen);
+        const existing = this.screens.find(s => s instanceof SongSelectScreen);
         if (existing) {
             this.screens.makeCurrent(existing);
             return;

@@ -70,6 +70,15 @@ export class TextureCache {
         return p;
     }
 
+    /**
+     * Forget everything (gameplay frees song select's covers). Textures still on screen
+     * keep working; the rest are collected once nothing references them.
+     */
+    clear(): void {
+        this.map.clear();
+        this.settled.clear();
+    }
+
     /** Synchronous peek for already-loaded textures. */
     peek(url: string): Texture | null | undefined {
         return this.settled.get(url);

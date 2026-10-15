@@ -41,6 +41,11 @@ export class MusicController {
     private historyPos = -1;
     private loadSeq = 0;
     private lent = false;
+    /**
+     * A paused library song is unloaded (a decoded song is ~70 MB) and only
+     * its place remembered; resuming decodes it again from there.
+     */
+    private parked: { setKey: string; ms: number; duration: number } | null = null;
     /** In song select the selected song loops from its preview point. */
     loopFromPreview = false;
     enabled = true;
@@ -79,6 +84,16 @@ export class MusicController {
         });
     }
 
+    /** Unload the paused library track, remembering where it was. */
+    private park(): void {
+        const t = this.track;
+        if (!t || this.lent || t.isPlaying || !this.trackSetKey) return;
+        this.parked = { setKey: this.trackSetKey, ms: t.currentTime, duration: t.duration };
+        audioLog('music.park', `#${t.debugId} at ${(this.parked.ms / 1000).toFixed(2)}s`);
+        this.stopTrack(0);
+        this.timeline = null;
+    }
+
     get isPlaying(): boolean {
         if (this.track && !this.lent) return this.track.isPlaying;
         return this.preview.playing;
@@ -86,10 +101,12 @@ export class MusicController {
 
     /** Current position in ms (library tracks only). */
     get position(): number {
+        if (this.parked) return this.parked.ms;
         return this.track && !this.lent ? this.track.currentTime : this.preview.currentTime;
     }
 
     get duration(): number {
+        if (this.parked) return this.parked.duration;
         return this.track && !this.lent ? this.track.duration : this.preview.duration;
     }
 
@@ -98,8 +115,14 @@ export class MusicController {
     }
 
     /** Play a library set. `fromPreview` starts at the map's preview point. */
-    async playSet(set: LibrarySet, opts: { fromPreview?: boolean; restart?: boolean; fadeInMs?: number } = {}): Promise<void> {
+    async playSet(set: LibrarySet, opts: { fromPreview?: boolean; restart?: boolean; fadeInMs?: number; startAtMs?: number } = {}): Promise<void> {
         this.resumeAfterPreview = true;
+        // Resuming the song that was unloaded while paused: carry on where it was.
+        const parked = this.parked;
+        this.parked = null;
+        if (parked && parked.setKey === set.key && !opts.restart && !opts.fromPreview && opts.startAtMs === undefined) {
+            opts = { ...opts, restart: true, startAtMs: parked.ms };
+        }
         const now = this.current.value;
         if (!opts.restart && now?.kind === 'library' && now.set.key === set.key && this.track && this.trackSetKey === set.key && !this.lent) {
             if (!this.track.isPlaying) this.track.play();
@@ -126,7 +149,7 @@ export class MusicController {
             this.timeline = null;
             streamUrl = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>]));
             this.streaming = { seq, url: streamUrl, pausedAt: null };
-            const startAt = opts.fromPreview ? (set.previewTime > 0 ? set.previewTime : -0.4) : 0;
+            const startAt = opts.startAtMs ?? (opts.fromPreview ? (set.previewTime > 0 ? set.previewTime : -0.4) : 0);
             void this.preview.play(streamUrl, { fadeInMs, startAt }).catch(() => {});
             this.playingState.value = true;
             this.loadTimeline(set, seq);
@@ -156,7 +179,7 @@ export class MusicController {
                 this.playingState.value = false;
                 return;
             }
-            const start = streamed ?? (opts.fromPreview ? Math.max(0, set.previewTime > 0 ? set.previewTime : track.duration * 0.4) : 0);
+            const start = streamed ?? opts.startAtMs ?? (opts.fromPreview ? Math.max(0, set.previewTime > 0 ? set.previewTime : track.duration * 0.4) : 0);
             track.playFrom(Math.min(start, Math.max(0, track.duration - 1)), streamed !== null ? 80 : fadeInMs);
             this.preview.stop(80);
             this.playingState.value = true;
@@ -270,9 +293,19 @@ export class MusicController {
             return;
         }
         if (this.track && !this.lent) {
-            if (this.track.isPlaying) this.track.pause();
-            else this.track.play();
-            this.playingState.value = this.track.isPlaying;
+            if (this.track.isPlaying) {
+                this.track.pause();
+                this.playingState.value = false;
+                this.park();
+            } else {
+                this.track.play();
+                this.playingState.value = this.track.isPlaying;
+            }
+            return;
+        }
+        const now = this.current.value;
+        if (this.parked && now?.kind === 'library' && now.set.key === this.parked.setKey) {
+            void this.playSet(now.set);
             return;
         }
         if (this.current.value?.kind === 'online') {
@@ -282,7 +315,8 @@ export class MusicController {
     }
 
     seek(ms: number): void {
-        if (this.track && !this.lent) this.track.seek(ms);
+        if (this.parked) this.parked.ms = ms;
+        else if (this.track && !this.lent) this.track.seek(ms);
     }
 
     /** Pause, and drop any song still loading so it can't start later (gameplay is taking over). */
@@ -302,7 +336,12 @@ export class MusicController {
         // A song still loading (quick re-selection) must not start over gameplay.
         ++this.loadSeq;
         audioLog('music.lend', `key match=${this.trackSetKey === setKey} track=${this.track ? '#' + this.track.debugId : '-'} preview=${this.preview.playing}`);
-        if (!this.track || this.trackSetKey !== setKey) return null;
+        this.parked = null;
+        if (!this.track || this.trackSetKey !== setKey) {
+            // Gameplay decodes its own song: the menu's one goes.
+            this.stopTrack(0);
+            return null;
+        }
         this.lent = true;
         this.track.ended.clear();
         this.track.loop = false;

@@ -83,6 +83,8 @@ export class PlayerScreen extends Screen {
     private stopFailSound: (() => void) | null = null;
     override readonly hideToolbar = true;
     override readonly showMenuCursor = false;
+    /** Song select & co. are rebuilt after play instead of sitting in memory under it. */
+    override readonly unloadsScreensBelow = true;
     /** Settings may be opened (Ctrl+O) while paused, and apply live. */
     override allowOverlays = false;
     outcome: PlayerOutcome = 'none';
@@ -335,9 +337,40 @@ export class PlayerScreen extends Screen {
             this.updateBackgroundLayers();
         }, true));
         this.offs.push(s.backgroundVideo.bind(on => {
-            if (on && o.data.events.video && !this.video) void this.loadVideo(o.data.events.video);
+            if (on && o.data.events.video && !this.video && !this.fullyDimmed) void this.loadVideo(o.data.events.video);
             this.updateBackgroundLayers();
         }, true));
+        // At 100% dim nothing of the background shows, so it isn't loaded; lowering the dim loads it.
+        this.offs.push(s.backgroundDim.bind(() => {
+            if (this.fullyDimmed || this.released) return;
+            if (s.backgroundVideo.value && o.data.events.video && !this.video) void this.loadVideo(o.data.events.video);
+            if (this.storyboard && this.storyboardLoaded && !this.storyboard.imagesLoaded) void this.loadStoryboardImages();
+            if (this.entered && this.backgroundReleased) {
+                this.backgroundReleased = false;
+                void this.game.setBackgroundForSet(o.selection.set);
+            }
+        }));
+    }
+
+    /** Background dim at 100%: the background, video and storyboard images are invisible. */
+    private get fullyDimmed(): boolean {
+        return this.game.settings.backgroundDim.value >= 0.999;
+    }
+
+    /** The background image was dropped for a fully dimmed play. */
+    private backgroundReleased = false;
+
+    private async loadStoryboardImages(): Promise<void> {
+        const sb = this.storyboard;
+        if (!sb) return;
+        try {
+            const archive = await this.game.library.openArchive(this.options.selection.set.key);
+            if (this.released) return;
+            await sb.loadImages(archive);
+        } catch (e) {
+            console.warn('storyboard images failed to load', e);
+        }
+        this.updateBackgroundLayers();
     }
 
     /** Ready to show: storyboard images (when shown) are decoded. The loader waits on this. */
@@ -351,7 +384,7 @@ export class PlayerScreen extends Screen {
         try {
             const archive = await this.game.library.openArchive(this.options.selection.set.key);
             if (this.released) return;
-            await sb.load(archive, this.game.audio);
+            await sb.load(archive, this.game.audio, !this.fullyDimmed);
         } catch (e) {
             console.warn('storyboard failed to load', e);
         }
@@ -524,12 +557,22 @@ export class PlayerScreen extends Screen {
         cursor.external = true;
         this.game.updateCursorVisibility();
         this.applyBackground(800);
+        // Free what play doesn't show: song select's covers (it was unloaded under us) and,
+        // at 100% dim, the background image; then collect it all before the first notes.
+        this.game.covers.clear();
+        if (this.fullyDimmed) {
+            this.backgroundReleased = true;
+            setTimeout(() => {
+                if (this.fullyDimmed && this.backgroundReleased && !this.released) this.game.background.clear();
+            }, 800);
+        }
+        setTimeout(() => (globalThis as { gc?: () => void }).gc?.(), 900);
     }
 
     private applyBackground(duration: number): void {
         const s = this.game.settings;
         const bg = this.game.background;
-        const breakLift = this.dimInBreak * 0.35;
+        const breakLift = this.fullyDimmed ? 0 : this.dimInBreak * 0.35;
         bg.setDim(Math.max(0, s.backgroundDim.value * (1 - breakLift)), duration);
         bg.setBlur(s.backgroundBlur.value, duration);
     }
@@ -557,6 +600,11 @@ export class PlayerScreen extends Screen {
     private releaseGameplay(): void {
         if (this.released) return;
         this.released = true;
+        // Results and song select show the map's background again.
+        if (this.backgroundReleased) {
+            this.backgroundReleased = false;
+            void this.game.setBackgroundForSet(this.options.selection.set);
+        }
         if (this.stopFailSound) {
             audioLog('player.failsound.stop');
             this.stopFailSound();

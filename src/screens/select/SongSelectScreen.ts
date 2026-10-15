@@ -54,6 +54,21 @@ let published: Selection | null = null;
  */
 export class SongSelectScreen extends Screen {
     override readonly hideMenuCursorOnNonMouseInput = true;
+
+    /** Unloaded during gameplay; a fresh one restores the selection from game.selection. */
+    override recreate(): SongSelectScreen {
+        const fresh = new SongSelectScreen();
+        fresh.rebuiltAfterPlay = true;
+        return fresh;
+    }
+    /** Built to replace the one unloaded during gameplay: music resumes like onResuming. */
+    private rebuiltAfterPlay = false;
+
+    override onUnloading(): void {
+        this.closePopups();
+        this.pending?.cancel();
+        this.pending = null;
+    }
     private carousel!: BeatmapCarousel;
     private wedge!: BeatmapInfoWedge;
     private leaderboard!: LocalLeaderboard;
@@ -681,6 +696,7 @@ export class SongSelectScreen extends Screen {
         this.game.music.loopFromPreview = !this.libraryEmpty;
         if (this.current) {
             this.publish();
+            if (this.rebuiltAfterPlay) this.resumeMusic();
             this.applySelection();
         }
         // Show the empty state without a cross-fade on first entry.

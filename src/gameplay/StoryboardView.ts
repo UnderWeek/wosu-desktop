@@ -89,8 +89,35 @@ export class StoryboardView {
         return this.storyboard.sprites.some(s => normalizeStoryboardPath(s.path) === want);
     }
 
-    /** Decode every image and sample the storyboard uses. Safe to call once. */
-    async load(archive: OszArchive, engine: AudioEngine): Promise<void> {
+    /** Whether the images have been decoded (they're skipped while the background is fully dimmed). */
+    imagesLoaded = false;
+
+    /**
+     * Decode the samples and (with `withImages`) every image the storyboard
+     * uses. Call once; images skipped here can come later via `loadImages`.
+     */
+    async load(archive: OszArchive, engine: AudioEngine, withImages = true): Promise<void> {
+        const samplePaths = new Set(this.storyboard.samples.map(s => s.path));
+        const sampleLoads = [...samplePaths].map(async path => {
+            const name = archive.find(path);
+            let buf: AudioBuffer | null = null;
+            if (name) {
+                try {
+                    const bytes = await archive.readBytes(name);
+                    buf = await engine.context.decodeAudioData(bytes.slice().buffer);
+                } catch {
+                    buf = null;
+                }
+            }
+            this.sounds.set(normalizeStoryboardPath(path), buf);
+        });
+        await Promise.all([withImages ? this.loadImages(archive) : null, ...sampleLoads]);
+    }
+
+    /** Decode every image the storyboard uses. Safe to call once. */
+    async loadImages(archive: OszArchive): Promise<void> {
+        if (this.imagesLoaded) return;
+        this.imagesLoaded = true;
         const paths = new Set<string>();
         for (const s of this.storyboard.sprites) {
             for (const p of s.kind === 'animation' ? animationFramePaths(s) : [s.path]) paths.add(p);
@@ -113,24 +140,9 @@ export class StoryboardView {
         };
         // A few at a time: decoding everything at once stalls the loader.
         const queue = [...paths];
-        const workers = Array.from({ length: 6 }, async () => {
+        await Promise.all(Array.from({ length: 6 }, async () => {
             while (queue.length && !this.disposed) await loadImage(queue.shift()!);
-        });
-        const samplePaths = new Set(this.storyboard.samples.map(s => s.path));
-        const sampleLoads = [...samplePaths].map(async path => {
-            const name = archive.find(path);
-            let buf: AudioBuffer | null = null;
-            if (name) {
-                try {
-                    const bytes = await archive.readBytes(name);
-                    buf = await engine.context.decodeAudioData(bytes.slice().buffer);
-                } catch {
-                    buf = null;
-                }
-            }
-            this.sounds.set(normalizeStoryboardPath(path), buf);
-        });
-        await Promise.all([...workers, ...sampleLoads]);
+        }));
         if (this.disposed) return;
         for (const e of this.entries) {
             e.frames = (e.def.kind === 'animation' ? animationFramePaths(e.def) : [e.def.path])
