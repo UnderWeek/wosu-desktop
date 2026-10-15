@@ -6,7 +6,8 @@
 
 **An osu!standard client in TypeScript — in your browser, or as a native desktop app that keeps time with osu!lazer.**
 
-[![Play in the browser](https://img.shields.io/badge/play-wosu.dino.icu-ff66aa?style=for-the-badge)](https://wosu.dino.icu)
+[![node-sdl branch](https://img.shields.io/badge/branch-node--sdl-ff66aa?style=for-the-badge&logo=git&logoColor=white)](https://github.com/UnderWeek/wosu-desktop/tree/node-sdl)
+[![electron branch](https://img.shields.io/badge/branch-electron-47848f?style=for-the-badge&logo=electron&logoColor=white)](https://github.com/UnderWeek/wosu-desktop/tree/electron)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=for-the-badge&logo=typescript&logoColor=white)](src)
 [![WebGPU](https://img.shields.io/badge/WebGPU-Dawn%20%2F%20Metal-005a9c?style=for-the-badge)](sdl)
 [![Electron](https://img.shields.io/badge/Electron-47848f?style=for-the-badge&logo=electron&logoColor=white)](electron)
@@ -17,9 +18,6 @@
 <sub>YOASOBI - Yoru ni Kakeru [Keirelia's Insane], mapped by <a href="https://osu.ppy.sh/beatmapsets/1238759">Petal</a> (Autoplay)</sub>
 
 [Features](#-features) · [Branches](#-branches) · [Desktop app](#%EF%B8%8F-desktop-app) · [Controls](#%EF%B8%8F-controls) · [Getting started](#-getting-started) · [How it works](#-how-it-works) · [Credits](#-credits--licenses)
-
-<a href="https://github.com/UnderWeek/wosu-desktop/tree/node-sdl"><img src="https://img.shields.io/badge/branch-node--sdl-ff66aa?style=flat-square&logo=git&logoColor=white" alt="node-sdl branch"></a>
-<a href="https://github.com/UnderWeek/wosu-desktop/tree/electron"><img src="https://img.shields.io/badge/branch-electron-47848f?style=flat-square&logo=electron&logoColor=white" alt="electron branch"></a>
 
 </div>
 
