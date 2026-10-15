@@ -671,6 +671,39 @@ new PerformanceObserver(list => {
     for (const e of list.getEntries()) if (e.duration > 50) logStall(`gc ${e.detail?.kind ?? ''} ${e.duration.toFixed(0)}ms`);
 }).observe({ entryTypes: ['gc'] });
 let lastFrameEnd = performance.now();
+/**
+ * STALL_PROFILE=1: keep a rolling V8 CPU profile (restarted every 10 s) and save it to
+ * ~/.wosu/logs/stall-<time>.cpuprofile when a frame stalls, to see which JS ran.
+ */
+const stallProfiler = process.env.STALL_PROFILE ? await (async () => {
+    const { Session } = await import('node:inspector/promises');
+    const session = new Session();
+    session.connect();
+    await session.post('Profiler.enable');
+    await session.post('Profiler.setSamplingInterval', { interval: 500 });
+    await session.post('Profiler.start');
+    let busy = false, startedAt = performance.now();
+    const restart = async save => {
+        if (busy) return;
+        busy = true;
+        try {
+            const { profile } = await session.post('Profiler.stop');
+            await session.post('Profiler.start');
+            startedAt = performance.now();
+            if (save) {
+                const file = path.join(os.homedir(), '.wosu', 'logs', `stall-${new Date().toISOString().replace(/[:.]/g, '-')}.cpuprofile`);
+                fs.writeFile(file, JSON.stringify(profile), () => {});
+                console.warn('[stall] profile saved', file);
+            }
+        } finally {
+            busy = false;
+        }
+    };
+    return {
+        tick() { if (performance.now() - startedAt > 10000) void restart(false); },
+        stalled() { void restart(true); },
+    };
+})() : null;
 function frame() {
     if (win.destroyed) return;
     const t0 = performance.now();
@@ -697,9 +730,11 @@ function frame() {
     const tEnd = performance.now();
     const d = tEnd - t;
     if (tEnd - lastFrameEnd > 250) {
+        stallProfiler?.stalled();
         logStall(`frame ${(tEnd - lastFrameEnd).toFixed(0)}ms: between frames ${(t0 - lastFrameEnd).toFixed(0)}, sdl events ${(t - t0).toFixed(0)}, game ${(tRaf - t).toFixed(0)}, present ${(tEnd - tRaf).toFixed(0)}`);
     }
     lastFrameEnd = tEnd;
+    stallProfiler?.tick();
     if (drew) {
         stats.frames++;
         if (d > stats.worst) stats.worst = d;
