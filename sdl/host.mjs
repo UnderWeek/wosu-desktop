@@ -692,38 +692,38 @@ new PerformanceObserver(list => {
 }).observe({ entryTypes: ['gc'] });
 let lastFrameEnd = performance.now();
 /**
- * STALL_PROFILE=1: keep a rolling V8 CPU profile (restarted every 10 s) and save it to
- * ~/.wosu/logs/stall-<time>.cpuprofile when a frame stalls, to see which JS ran.
+ * A V8 CPU profile runs all the time (~1% at 1 ms sampling) and is cut on every screen change,
+ * never mid-play (stopping one costs ~12 ms per minute it ran). When a frame stalls, the
+ * profile so far is saved as ~/.wosu/logs/stall-<time>.cpuprofile. NO_STALL_PROFILE=1 turns it off.
  */
-const stallProfiler = process.env.STALL_PROFILE ? await (async () => {
+const stallProfiler = process.env.NO_STALL_PROFILE ? null : await (async () => {
     const { Session } = await import('node:inspector/promises');
     const session = new Session();
     session.connect();
     await session.post('Profiler.enable');
-    await session.post('Profiler.setSamplingInterval', { interval: 500 });
+    await session.post('Profiler.setSamplingInterval', { interval: 1000 });
     await session.post('Profiler.start');
-    let busy = false, startedAt = performance.now();
-    const restart = async save => {
+    let busy = false;
+    const cut = async save => {
         if (busy) return;
         busy = true;
         try {
             const { profile } = await session.post('Profiler.stop');
             await session.post('Profiler.start');
-            startedAt = performance.now();
             if (save) {
                 const file = path.join(os.homedir(), '.wosu', 'logs', `stall-${new Date().toISOString().replace(/[:.]/g, '-')}.cpuprofile`);
                 fs.writeFile(file, JSON.stringify(profile), () => {});
                 console.warn('[stall] profile saved', file);
             }
+        } catch (e) {
+            console.warn('[stall] profiler', e.message);
         } finally {
             busy = false;
         }
     };
-    return {
-        tick() { if (performance.now() - startedAt > 10000) void restart(false); },
-        stalled() { void restart(true); },
-    };
-})() : null;
+    hw.addEventListener('wosu:screenchange', () => setTimeout(() => void cut(false), 0));
+    return { stalled: () => void cut(true) };
+})();
 function frame() {
     if (win.destroyed) return;
     const t0 = performance.now();
@@ -754,7 +754,6 @@ function frame() {
         logStall(`frame ${(tEnd - lastFrameEnd).toFixed(0)}ms: between frames ${(t0 - lastFrameEnd).toFixed(0)}, sdl events ${(t - t0).toFixed(0)}, game ${(tRaf - t).toFixed(0)}, present ${(tEnd - tRaf).toFixed(0)}`);
     }
     lastFrameEnd = tEnd;
-    stallProfiler?.tick();
     if (drew) {
         stats.frames++;
         if (d > stats.worst) stats.worst = d;

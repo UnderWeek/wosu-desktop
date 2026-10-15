@@ -25,6 +25,8 @@ async function main(): Promise<void> {
         installAudioDebug();
         installInputDebug();
         const game = await Game.boot(host);
+        // The desktop host cuts its stall profile on screen changes (sdl/host.mjs).
+        game.screens.changed.add(() => window.dispatchEvent(new CustomEvent('wosu:screenchange')));
         audioDebugState(() => `${game.music.debugState()}\nscreens: ${game.screens.screens.map(s => s.constructor.name).join(' > ')}`);
         if (import.meta.env.DEV || native?.debug) (window as unknown as { game: Game }).game = game;
     } catch (e) {
