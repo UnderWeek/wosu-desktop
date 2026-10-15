@@ -85,13 +85,11 @@ function synthMp3(o: SynthOptions = {}): ArrayBuffer {
 }
 
 describe('mp3Info', () => {
-    it('matches the original offset prediction on the fixture', () => {
+    it('skips the LAME encoder delay plus the decoder delay on the fixture', () => {
         const ab = toArrayBuffer(readFileSync(FIXTURE));
-        const expected = oldStartOffset('audio.mp3', ab);
         const result = analyzeAudio('audio.mp3', ab);
-        expect(result.startOffsetMs).toBeCloseTo(expected, 9);
-        // The fixture carries a LAME "Info" header at 44.1 kHz: 68 - 1152000/44100.
-        expect(result.startOffsetMs).toBeCloseTo(68 - 1152000 / 44100, 9);
+        // The fixture carries a LAME "Info" header at 44.1 kHz with the usual 576-sample delay.
+        expect(result.startOffsetMs).toBeCloseTo(((576 + 529) / 44100) * 1000, 9);
     });
 
     it('scans the same sections as the original parser on the fixture', () => {
@@ -124,38 +122,33 @@ describe('mp3Info', () => {
         expect(readMp3Tags(new DataView(buffer)).some(t => t.type === 'Xing')).toBe(false);
     });
 
-    it('uses the fixed ogg offset for non-mp3 names', () => {
+    it('needs no offset for non-mp3 names', () => {
         const ab = new ArrayBuffer(16);
         const r = analyzeAudio('song.ogg', ab);
-        expect(r.startOffsetMs).toBe(19);
+        expect(r.startOffsetMs).toBe(0);
         expect(r.buffer).toBe(ab);
-        expect(oldStartOffset('song.ogg', ab)).toBe(19);
     });
 
-    it('agrees with the original on synthetic headers', () => {
-        const cases: [string, SynthOptions][] = [
-            ['xing with id3', { id3: true, tag: 'Xing' }],
-            ['xing without id3', { tag: 'Xing' }],
-            ['info tag', { id3: true, tag: 'Info' }],
-            ['bad enc delay', { id3: true, tag: 'Xing', encDelay: 1105 }],
-            ['no tag', { id3: true, tag: null }],
-            ['48k', { tag: 'Xing', srIndex: 1 }],
-            ['32k', { tag: 'Xing', srIndex: 2 }],
+    it('skips encoder + decoder delay on synthetic headers', () => {
+        const cases: [string, SynthOptions, number][] = [
+            ['xing with id3', { id3: true, tag: 'Xing' }, (1105 / 44100) * 1000],
+            ['xing without id3', { tag: 'Xing' }, (1105 / 44100) * 1000],
+            ['info tag', { id3: true, tag: 'Info' }, (1105 / 44100) * 1000],
+            ['no tag', { id3: true, tag: null }, 0],
+            ['48k', { tag: 'Xing', srIndex: 1 }, (1105 / 48000) * 1000],
+            ['32k', { tag: 'Xing', srIndex: 2 }, (1105 / 32000) * 1000],
         ];
-        for (const [name, opts] of cases) {
-            const ab = synthMp3(opts);
-            const mine = analyzeAudio('x.mp3', ab.slice(0)).startOffsetMs;
-            const old = oldStartOffset('x.mp3', ab.slice(0));
-            expect(mine, name).toBeCloseTo(old, 9);
+        for (const [name, opts, want] of cases) {
+            expect(analyzeAudio('x.mp3', synthMp3(opts)).startOffsetMs, name).toBeCloseTo(want, 9);
         }
     });
 
     it('predicts the documented offsets', () => {
-        expect(analyzeAudio('x.mp3', synthMp3({ tag: null })).startOffsetMs).toBe(22);
-        expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', encDelay: 100 })).startOffsetMs).toBe(22);
-        expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', srIndex: 1 })).startOffsetMs).toBeCloseTo(68 - 24, 9);
-        expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', srIndex: 2 })).startOffsetMs).toBeCloseTo(89 - 36, 9);
-        expect(predictMp3Offset([])).toBe(22);
+        expect(analyzeAudio('x.mp3', synthMp3({ tag: null })).startOffsetMs).toBe(0);
+        expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', encDelay: 100 })).startOffsetMs).toBeCloseTo(((100 + 529) / 44100) * 1000, 9);
+        expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', srIndex: 1 })).startOffsetMs).toBeCloseTo(((576 + 529) / 48000) * 1000, 9);
+        expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', srIndex: 2 })).startOffsetMs).toBeCloseTo(((576 + 529) / 32000) * 1000, 9);
+        expect(predictMp3Offset([])).toBe(0);
     });
 
     it('removes the Xing frame even without an ID3 tag', () => {
@@ -171,6 +164,6 @@ describe('mp3Info', () => {
         for (let i = 0; i < junk.length; i++) junk[i] = (i * 7919) & 0xff;
         const r = analyzeAudio('junk.mp3', junk.buffer);
         expect(Number.isFinite(r.startOffsetMs)).toBe(true);
-        expect(analyzeAudio('empty.mp3', new ArrayBuffer(0)).startOffsetMs).toBe(22);
+        expect(analyzeAudio('empty.mp3', new ArrayBuffer(0)).startOffsetMs).toBe(0);
     });
 });

@@ -103,7 +103,7 @@ describe('MusicTrack', () => {
 
     it('decodes with the ogg start offset and reports duration', async () => {
         const { track } = await makeTrack({ duration: 120 });
-        expect(track.startOffsetMs).toBe(19);
+        expect(track.startOffsetMs).toBe(0);
         expect(track.duration).toBe(120000);
         expect(track.isPlaying).toBe(false);
     });
@@ -192,15 +192,15 @@ describe('MusicTrack', () => {
         await track.setRate(1.5, false);
         expect(track.isPlaying).toBe(true);
         // the latency term changes with rate; buffer position must not jump
-        expect(track.currentTime + track.posoffsetMs).toBeCloseTo(before + 19, 6);
+        expect(track.currentTime + track.posoffsetMs).toBeCloseTo(before, 6);
         track.stop();
     });
 
     it('output latency joins the offset, scaled to song time by the rate', async () => {
         const { track } = await makeTrack({ outputLatency: 0.02, baseLatency: 0.005 });
-        expect(track.posoffsetMs).toBeCloseTo(19 + 25, 6);
+        expect(track.posoffsetMs).toBeCloseTo(25, 6);
         await track.setRate(1.5, true);
-        expect(track.posoffsetMs).toBeCloseTo(19 + 25 * 1.5, 6);
+        expect(track.posoffsetMs).toBeCloseTo(25 * 1.5, 6);
     });
 
     it('positive user offset delays song time', async () => {

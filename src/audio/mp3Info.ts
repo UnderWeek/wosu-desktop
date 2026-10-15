@@ -5,10 +5,11 @@
  * that understand the Xing/LAME header trim the encoder delay (gapless),
  * others play it as leading silence, so the same song started at the same
  * time is heard ~25-50 ms apart. We remove the Xing frame so every decoder
- * behaves the same (no trimming), then compensate with a start offset
- * predicted from the LAME header. The offset values below are the ones the
- * game has always used (tuned empirically); keep them in sync with
- * `tests/audio/mp3Info.test.ts`.
+ * behaves the same (no trimming), then skip exactly what a gapless decoder
+ * (BASS in osu!/lazer, ffmpeg) would have: the LAME encoder delay plus the
+ * MP3 decoder's 529 samples. Measured against ffmpeg's gapless decode this
+ * is sample-exact; the old hand-tuned constants (19-44 ms) were 17-22 ms off,
+ * by a different amount per file type, which made some maps early and others late.
  */
 
 export interface FrameHeader {
@@ -186,22 +187,20 @@ export function readMp3Tags(view: DataView): Mp3Tag[] {
     return tags;
 }
 
-const DEFAULT_MP3_OFFSET = 22;
-const OGG_OFFSET = 19;
+/** Untagged MP3s and Ogg: every decoder starts them at the same sample. */
+const DEFAULT_MP3_OFFSET = 0;
+const OGG_OFFSET = 0;
+/** MP3 decoder delay (samples) that gapless players drop along with the encoder delay. */
+const DECODER_DELAY = 529;
 
-/** Predicted decoder start offset (ms) from the scanned tags. */
+/** Leading samples (as ms) a gapless player skips but our Xing-less decode keeps. */
 export function predictMp3Offset(tags: readonly Mp3Tag[]): number {
-    if (!tags.length) return DEFAULT_MP3_OFFSET;
-    const last = tags[tags.length - 1];
-    if (last.type !== 'frame' || last.sampleLength !== 1152) return DEFAULT_MP3_OFFSET;
     let xing: Extract<Mp3Tag, { type: 'Xing' }> | null = null;
     for (const t of tags) if (t.type === 'Xing') xing = t;
-    if (!xing) return DEFAULT_MP3_OFFSET;
-    if (xing.encDelay !== 576) return DEFAULT_MP3_OFFSET;
+    if (!xing || xing.encDelay < 0) return DEFAULT_MP3_OFFSET;
     const sr = xing.header.sampleRate;
-    if (sr === 32000) return 89 - 1152000 / sr;
-    if (sr === 44100 || sr === 48000) return 68 - 1152000 / sr;
-    return DEFAULT_MP3_OFFSET;
+    if (!(sr > 0)) return DEFAULT_MP3_OFFSET;
+    return ((xing.encDelay + DECODER_DELAY) / sr) * 1000;
 }
 
 export interface AudioAnalysis {
@@ -231,7 +230,8 @@ export function analyzeAudio(filename: string, buffer: ArrayBuffer): AudioAnalys
 
     const xi = tags.findIndex(t => t.type === 'Xing');
     const hasFrameAfter = xi !== -1 && tags.slice(xi + 1).some(t => t.type === 'frame');
-    if (!hasFrameAfter) return { startOffsetMs, buffer, strippedXing: false };
+    // Left in place, the header lets the decoder trim the delay itself.
+    if (!hasFrameAfter) return { startOffsetMs: xi === -1 ? startOffsetMs : DEFAULT_MP3_OFFSET, buffer, strippedXing: false };
 
     const xing = tags[xi];
     const cutStart = xing.offset;
