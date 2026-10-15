@@ -11,6 +11,8 @@
  * Env: PRESENT=immediate|mailbox|fifo (default immediate), STATS=1 prints fps.
  */
 import fs from 'node:fs';
+import os from 'node:os';
+import { PerformanceObserver } from 'node:perf_hooks';
 import { execFileSync } from 'node:child_process';
 import { resolveObjectURL } from 'node:buffer';
 import path from 'node:path';
@@ -654,8 +656,24 @@ function syncCursor() {
 }
 
 const stats = { frames: 0, worst: 0, since: performance.now() };
+/**
+ * Hitches: any frame (or gap between frames) over 250 ms goes to ~/.wosu/logs/stalls.log
+ * with where the time went, plus every GC pause over 50 ms.
+ */
+const STALL_LOG = path.join(os.homedir(), '.wosu', 'logs', 'stalls.log');
+function logStall(line) {
+    const m = process.memoryUsage();
+    const msg = `${new Date().toISOString()} ${line} | rss ${(m.rss / 1048576) | 0}MB heap ${(m.heapUsed / 1048576) | 0}/${(m.heapTotal / 1048576) | 0}MB ext ${(m.external / 1048576) | 0}MB\n`;
+    fs.appendFile(STALL_LOG, msg, () => {});
+    console.warn('[stall]', msg.trimEnd());
+}
+new PerformanceObserver(list => {
+    for (const e of list.getEntries()) if (e.duration > 50) logStall(`gc ${e.detail?.kind ?? ''} ${e.duration.toFixed(0)}ms`);
+}).observe({ entryTypes: ['gc'] });
+let lastFrameEnd = performance.now();
 function frame() {
     if (win.destroyed) return;
+    const t0 = performance.now();
     sdl.pump?.();
     const t = performance.now();
     const q = rafQueue;
@@ -668,6 +686,7 @@ function frame() {
         }
     }
     // Pixi submitted this frame's work into renderer.getCurrentTexture(): show it.
+    const tRaf = performance.now();
     syncCursor();
     syncSurfaceSize();
     const drew = textureTaken && renderer;
@@ -675,7 +694,12 @@ function frame() {
         mainContext.present();
         textureTaken = false;
     }
-    const d = performance.now() - t;
+    const tEnd = performance.now();
+    const d = tEnd - t;
+    if (tEnd - lastFrameEnd > 250) {
+        logStall(`frame ${(tEnd - lastFrameEnd).toFixed(0)}ms: between frames ${(t0 - lastFrameEnd).toFixed(0)}, sdl events ${(t - t0).toFixed(0)}, game ${(tRaf - t).toFixed(0)}, present ${(tEnd - tRaf).toFixed(0)}`);
+    }
+    lastFrameEnd = tEnd;
     if (drew) {
         stats.frames++;
         if (d > stats.worst) stats.worst = d;
