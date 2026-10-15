@@ -16,7 +16,10 @@
 
 <sub>YOASOBI - Yoru ni Kakeru [Keirelia's Insane], mapped by <a href="https://osu.ppy.sh/beatmapsets/1238759">Petal</a> (Autoplay)</sub>
 
-[Features](#-features) · [Desktop app](#%EF%B8%8F-desktop-app) · [Controls](#%EF%B8%8F-controls) · [Getting started](#-getting-started) · [How it works](#-how-it-works) · [Credits](#-credits--licenses)
+[Features](#-features) · [Branches](#-branches) · [Desktop app](#%EF%B8%8F-desktop-app) · [Controls](#%EF%B8%8F-controls) · [Getting started](#-getting-started) · [How it works](#-how-it-works) · [Credits](#-credits--licenses)
+
+<a href="https://github.com/UnderWeek/wosu-desktop/tree/node-sdl"><img src="https://img.shields.io/badge/branch-node--sdl-ff66aa?style=flat-square&logo=git&logoColor=white" alt="node-sdl branch"></a>
+<a href="https://github.com/UnderWeek/wosu-desktop/tree/electron"><img src="https://img.shields.io/badge/branch-electron-47848f?style=flat-square&logo=electron&logoColor=white" alt="electron branch"></a>
 
 </div>
 
@@ -71,6 +74,14 @@
 </td>
 </tr>
 </table>
+
+## 🌿 Branches
+
+| Branch | What's there |
+| :-- | :-- |
+| [`main`](https://github.com/UnderWeek/wosu-desktop/tree/main) | The latest of everything: browser game, native host and Electron |
+| [`node-sdl`](https://github.com/UnderWeek/wosu-desktop/tree/node-sdl) | Native host development (Node + SDL2 + Dawn + BASS) |
+| [`electron`](https://github.com/UnderWeek/wosu-desktop/tree/electron) | The Electron desktop app as it was before the native host |
 
 ## 🖥️ Desktop app
 
