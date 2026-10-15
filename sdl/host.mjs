@@ -15,6 +15,7 @@ import os from 'node:os';
 import { PerformanceObserver } from 'node:perf_hooks';
 import { execFileSync } from 'node:child_process';
 import { resolveObjectURL } from 'node:buffer';
+import { registerHooks } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import gpu from '@kmamal/gpu';
@@ -30,6 +31,16 @@ const sdl = ANDROID ? (await import('../android/sdl-shim.mjs')).default : (await
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '..', 'dist');
 const ORIGIN = 'wosu://app/';
+
+// The game imports its own lazy files by page URL (wosu://app/vendor/…): load them from dist.
+registerHooks({
+    resolve(specifier, context, next) {
+        if (specifier.startsWith('wosu:')) {
+            return { url: pathToFileURL(path.join(DIST, decodeURIComponent(new URL(specifier).pathname))).href, shortCircuit: true };
+        }
+        return next(specifier, context);
+    },
+});
 const PRESENT = process.env.PRESENT || (ANDROID ? 'mailbox' : 'immediate');
 
 // ---------------------------------------------------------------------------
@@ -174,7 +185,16 @@ for (const name of ['window', 'document', 'navigator', 'location', 'history', 'l
 }
 g.window = g;
 // The game reads window.* and document.*; route window events through one target.
-for (const k of ['addEventListener', 'removeEventListener', 'dispatchEvent']) g[k] = hw[k].bind(hw);
+for (const k of ['addEventListener', 'removeEventListener']) g[k] = hw[k].bind(hw);
+// Node's own Events (e.g. Vite's 'vite:preloadError') aren't happy-dom's: re-dispatch them as one.
+g.dispatchEvent = ev => {
+    if (ev instanceof hw.Event) return hw.dispatchEvent(ev);
+    const copy = new hw.Event(ev.type, { bubbles: ev.bubbles, cancelable: ev.cancelable });
+    for (const k of Object.keys(ev)) copy[k] = ev[k];
+    const result = hw.dispatchEvent(copy);
+    if (copy.defaultPrevented) ev.preventDefault();
+    return result;
+};
 Object.defineProperty(g, 'devicePixelRatio', { get: () => win.pixelWidth / win.width, configurable: true });
 Object.defineProperty(g, 'innerWidth', { get: () => win.width, configurable: true });
 Object.defineProperty(g, 'innerHeight', { get: () => win.height, configurable: true });
