@@ -77,6 +77,8 @@ export class Game {
     readonly scores = new ScoreStore();
     readonly favourites = new Favourites();
     readonly beatmapOffsets = new BeatmapOffsets();
+    /** Mean hit error of the last play (lazer's "calibrate using last play"); offset += mean centres it. */
+    readonly lastPlayTiming = new Bindable<{ beatmapKey: string; meanMs: number; hits: number } | null>(null);
     readonly knownVideos = new KnownVideos();
     readonly api: BeatmapApi;
     readonly downloads: DownloadManager;

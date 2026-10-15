@@ -965,6 +965,7 @@ export class PlayerScreen extends Screen {
             return;
         }
         this.phase = 'failed';
+        this.recordTiming();
         audioLog('player.fail', `track #${this.options.track.debugId}`);
         this.failedAtTime = this.clock.frameTime;
         this.failClock = 0;
@@ -1065,6 +1066,7 @@ export class PlayerScreen extends Screen {
         if (this.phase !== 'playing') return;
         this.phase = 'completed';
         this.outcome = 'completed';
+        this.recordTiming();
         this.input.enabled = false;
         this.hitsounds.stopAll();
         const result = this.buildResult();
@@ -1082,6 +1084,18 @@ export class PlayerScreen extends Screen {
             if (this.destroyed || !this.isCurrent) return;
             this.push(new ResultsScreen(result, this.options.selection, { replay, allowRetry: !watched }));
         });
+    }
+
+    /** Remember this play's mean hit error for offset calibration (not for watched replays). */
+    private recordTiming(): void {
+        const errors = this.rules.hitErrors;
+        if (this.options.replay || errors.length < 10) return;
+        const { set, diff } = this.options.selection;
+        this.game.lastPlayTiming.value = {
+            beatmapKey: beatmapKeyOf({ beatmapId: diff.beatmapId, title: set.title, version: diff.version, setId: set.onlineSetId ?? 0 }),
+            meanMs: errors.reduce((a, b) => a + b, 0) / errors.length,
+            hits: errors.length,
+        };
     }
 
     private buildResult(): ScoreResult {

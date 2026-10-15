@@ -11,6 +11,7 @@ import type { ReplayInfo } from '../../gameplay/replay/Replay';
 import type { Action } from '../../input/bindings';
 import { desktopSettings } from '../../native/desktop';
 import { ModIconRow } from '../../overlays/mods/ModIcon';
+import { Button } from '../../ui/Button';
 import { Checkbox } from '../../ui/Checkbox';
 import { LoadingSpinner } from '../../ui/LoadingSpinner';
 import { Slider } from '../../ui/Slider';
@@ -501,6 +502,7 @@ class SettingsPanel extends UIComponent {
                     new Checkbox('Beatmap hitsounds', s.beatmapHitsounds),
                     slider('Audio offset', s.audioOffset, ms),
                     slider('Beatmap offset', loader.beatmapOffset, ms),
+                    this.calibrateButton(loader),
                 ],
             },
             {
@@ -516,6 +518,32 @@ class SettingsPanel extends UIComponent {
         }
         this.eventMode = 'static';
         this.hitArea = new Rectangle(0, 0, PANEL_W, 300);
+    }
+
+    /** lazer's "Calibrate using last play": centre the last play's hits on this map. */
+    private calibrateButton(loader: PlayerLoaderScreen): Button {
+        const g = loader.game;
+        const key = scoreKeyFor(loader.selection.set, loader.selection.diff);
+        const btn = new Button('Calibrate using last play', { height: 32, fontSize: 13, color: Colors.pinkDark });
+        const refresh = () => {
+            const t = g.lastPlayTiming.value;
+            const usable = !!t && t.beatmapKey === key;
+            btn.caption = usable ? `Calibrate using last play (${t.meanMs > 0 ? '+' : ''}${Math.round(t.meanMs)} ms)` : 'Calibrate using last play';
+            btn.alpha = usable ? 1 : 0.5;
+        };
+        refresh();
+        this.disposer.add(g.lastPlayTiming.bind(refresh));
+        btn.onActivate = () => {
+            const t = g.lastPlayTiming.value;
+            if (!t || t.beatmapKey !== key) {
+                g.notifications.info('Play this map first: calibration uses your hits from the last play.');
+                return;
+            }
+            loader.beatmapOffset.value += Math.round(t.meanMs);
+            g.lastPlayTiming.value = null;
+            g.notifications.info(`Beatmap offset: ${loader.beatmapOffset.value > 0 ? '+' : ''}${loader.beatmapOffset.value} ms`);
+        };
+        return btn;
     }
 
     get preferredHeight(): number {
