@@ -198,6 +198,16 @@ export class MusicTrack {
     private disposed = false;
 
     static async decode(engine: AudioEngine, bytes: ArrayBuffer, filename: string): Promise<MusicTrack> {
+        // Desktop host with osu!lazer installed: lazer's own decoder (BASS) puts song time 0
+        // exactly where lazer does, so nothing needs predicting.
+        const decodeSong = (globalThis as { wosuNative?: { decodeSong?: (b: ArrayBuffer, c: BaseAudioContext) => Promise<AudioBuffer> } }).wosuNative?.decodeSong;
+        if (decodeSong) {
+            try {
+                return new MusicTrack(engine, await decodeSong(bytes, engine.context), filename, 0);
+            } catch (e) {
+                console.warn('BASS decode failed, using the built-in decoder', e);
+            }
+        }
         const analysis = analyzeAudio(filename, bytes);
         const buffer = await decodeWithResync(engine.context, analysis.buffer);
         return new MusicTrack(engine, buffer, filename, analysis.startOffsetMs);

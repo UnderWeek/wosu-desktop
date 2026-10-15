@@ -197,7 +197,13 @@ const DECODER_DELAY = 529;
 export function predictMp3Offset(tags: readonly Mp3Tag[]): number {
     let xing: Extract<Mp3Tag, { type: 'Xing' }> | null = null;
     for (const t of tags) if (t.type === 'Xing') xing = t;
-    if (!xing || xing.encDelay < 0) return DEFAULT_MP3_OFFSET;
+    if (!xing) {
+        // No header: BASS (osu!/lazer) still drops the decoder delay, other decoders don't.
+        const frame = tags.find(t => t.type === 'frame');
+        const sr = frame?.type === 'frame' ? frame.header.sampleRate : 0;
+        return sr > 0 ? (DECODER_DELAY / sr) * 1000 : DEFAULT_MP3_OFFSET;
+    }
+    if (xing.encDelay < 0) return DEFAULT_MP3_OFFSET;
     const sr = xing.header.sampleRate;
     if (!(sr > 0)) return DEFAULT_MP3_OFFSET;
     return ((xing.encDelay + DECODER_DELAY) / sr) * 1000;

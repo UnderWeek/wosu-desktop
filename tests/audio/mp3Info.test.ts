@@ -105,7 +105,7 @@ describe('mp3Info', () => {
             ['xing with id3', { id3: true, tag: 'Xing' }, (1105 / 44100) * 1000],
             ['xing without id3', { tag: 'Xing' }, (1105 / 44100) * 1000],
             ['info tag', { id3: true, tag: 'Info' }, (1105 / 44100) * 1000],
-            ['no tag', { id3: true, tag: null }, 0],
+            ['no tag', { id3: true, tag: null }, (529 / 44100) * 1000],
             ['48k', { tag: 'Xing', srIndex: 1 }, (1105 / 48000) * 1000],
             ['32k', { tag: 'Xing', srIndex: 2 }, (1105 / 32000) * 1000],
         ];
@@ -115,7 +115,7 @@ describe('mp3Info', () => {
     });
 
     it('predicts the documented offsets', () => {
-        expect(analyzeAudio('x.mp3', synthMp3({ tag: null })).startOffsetMs).toBe(0);
+        expect(analyzeAudio('x.mp3', synthMp3({ tag: null })).startOffsetMs).toBeCloseTo((529 / 44100) * 1000, 9);
         expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', encDelay: 100 })).startOffsetMs).toBeCloseTo(((100 + 529) / 44100) * 1000, 9);
         expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', srIndex: 1 })).startOffsetMs).toBeCloseTo(((576 + 529) / 48000) * 1000, 9);
         expect(analyzeAudio('x.mp3', synthMp3({ tag: 'Xing', srIndex: 2 })).startOffsetMs).toBeCloseTo(((576 + 529) / 32000) * 1000, 9);
