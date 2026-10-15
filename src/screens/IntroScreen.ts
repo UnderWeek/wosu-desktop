@@ -50,7 +50,9 @@ export class IntroScreen extends Screen {
         this.welcome.anchor.set(0.5);
         this.welcome.alpha = 0;
         this.disclaimer = label(
-            'wosu! is an unofficial, open-source osu!standard client that runs entirely in your browser.\nosu! is a trademark of ppy Pty Ltd. Beatmaps are provided by community mirrors.',
+            isDesktop
+                ? 'wosu! is an unofficial, open-source osu!standard client.\nosu! is a trademark of ppy Pty Ltd.'
+                : 'wosu! is an unofficial, open-source osu!standard client that runs entirely in your browser.\nosu! is a trademark of ppy Pty Ltd. Beatmaps are provided by community mirrors.',
             { size: 13, weight: '500', color: Colors.grayA, align: 'center', lineHeight: 19 },
         );
         this.disclaimer.anchor.set(0.5, 1);

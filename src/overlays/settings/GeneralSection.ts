@@ -4,7 +4,7 @@ import { Colors } from '../../ui/theme';
 import { buttonRow, checkboxRow, textRow } from './rows';
 import type { SectionDef, SubsectionDef } from './types';
 
-const REPO = 'https://github.com/mostlime12195/wosu';
+const REPO = isDesktop ? 'https://github.com/UnderWeek/wosu-desktop' : 'https://github.com/mostlime12195/wosu';
 
 const SHORTCUTS = [
     'Ctrl+O — settings',
@@ -29,9 +29,9 @@ export function generalSection(game: Game): SectionDef {
                 title: 'About',
                 rows: [
                     textRow(`wosu! · build ${__BUILD_INFO__} · rendering with ${renderer}`, { color: Colors.white, size: 14, keywords: 'version build' }).row,
-                    textRow('An unofficial, open-source osu!std client that runs entirely in your browser.', { keywords: 'about' }).row,
+                    textRow(isDesktop ? 'An unofficial, open-source osu!std client.' : 'An unofficial, open-source osu!std client that runs entirely in your browser.', { keywords: 'about' }).row,
                     buttonRow('View source on GitHub', () => window.open(REPO, '_blank', 'noopener'), { icon: 'codeBranch', color: Colors.gray4, keywords: 'github source code' }),
-                    textRow('osu! is a trademark of ppy Pty Ltd. Beatmaps come from community mirrors (SayoBot, Mino, NeriNyan). PixiJS (MIT), Exo 2 (OFL), Font Awesome Free (CC BY 4.0 / OFL), Signalsmith Stretch (MIT).', { color: Colors.gray9, size: 12, keywords: 'credits licences licenses' }).row,
+                    textRow(`osu! is a trademark of ppy Pty Ltd. ${isDesktop ? '' : 'Beatmaps come from community mirrors (SayoBot, Mino, NeriNyan). '}PixiJS (MIT), Exo 2 (OFL), Font Awesome Free (CC BY 4.0 / OFL), Signalsmith Stretch (MIT).${isDesktop ? ' BASS (Un4seen Developments, non-commercial use).' : ''}`, { color: Colors.gray9, size: 12, keywords: 'credits licences licenses' }).row,
                 ],
             },
             ...(isDesktop ? [desktopSubsection(), lazerSubsection()] : []),

@@ -16,6 +16,7 @@ function listen(channel) {
 
 contextBridge.exposeInMainWorld('wosuNative', {
     platform: process.platform,
+    host: 'electron',
     debug: process.argv.includes('--wosu-debug'),
     db: {
         get: invoke('wosu:db:get'),

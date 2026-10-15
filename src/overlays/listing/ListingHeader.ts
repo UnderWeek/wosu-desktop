@@ -19,6 +19,7 @@ import {
     type StatusChoice,
 } from './ListingPager';
 import { TabStrip, type TabStripStyle } from './TabStrip';
+import { isDesktop } from '../../native/desktop';
 
 const TITLE_H = 64;
 const TABS_H = 40;
@@ -221,7 +222,7 @@ export class ListingHeader extends UIComponent {
             this.lang.layout(inner);
         } else {
             this.hint.text = this.tab === 'favourites'
-                ? 'Your favourites are kept in this browser. Use the heart on any beatmap to add it here.'
+                ? `Your favourites are kept ${isDesktop ? 'in wosu!' : 'in this browser'}. Use the heart on any beatmap to add it here.`
                 : 'Genre and language filters apply to latest, popular and random.';
             this.hint.position.set(pad + LABEL_W, y + 2);
             this.hint.tint = Colors.white;

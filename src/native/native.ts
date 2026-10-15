@@ -79,6 +79,8 @@ export interface DesktopConfig {
 
 export interface WosuNative {
     platform: string;
+    /** Which desktop shell runs the game (older shells don't say: Electron). */
+    host?: 'sdl' | 'electron';
     /** Started with WOSU_DEBUG=1. */
     debug: boolean;
     db: {

@@ -102,6 +102,7 @@ export function createNative({ onConfigChange } = {}) {
             for (const fn of openFileListeners) fn(f);
         },
         platform: process.platform,
+        host: 'sdl',
         debug: !!process.env.WOSU_DEBUG,
         db: {
             get: call('wosu:db:get'), put: call('wosu:db:put'), delete: call('wosu:db:delete'),

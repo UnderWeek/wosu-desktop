@@ -38,6 +38,8 @@ export interface RowOptions {
     description?: string;
     /** Row only exists while this is true (e.g. "restart required"). */
     visibleWhen?: Bindable<boolean>;
+    /** Greyed out and inert; the text says why. */
+    disabled?: string;
 }
 
 /**
@@ -59,8 +61,9 @@ export class SettingsRow extends UIComponent {
 
     constructor(readonly control: UIComponent, keywords: string, private readonly bindable: Restorable | null, opts: RowOptions = {}) {
         super();
-        this.keywords = `${keywords} ${opts.keywords ?? ''} ${opts.description ?? ''}`.toLowerCase();
-        this.desc = opts.description ? label(opts.description, { size: 12, weight: '500', color: Colors.grayA, wrap: 300, lineHeight: 16 }) : null;
+        const description = opts.disabled ? [opts.description, opts.disabled].filter(Boolean).join(' ') : opts.description;
+        this.keywords = `${keywords} ${opts.keywords ?? ''} ${description ?? ''}`.toLowerCase();
+        this.desc = description ? label(description, { size: 12, weight: '500', color: Colors.grayA, wrap: 300, lineHeight: 16 }) : null;
         this.visibleWhen = opts.visibleWhen ?? null;
         this.restore.alpha = 0;
         this.restore.eventMode = 'none';
@@ -70,6 +73,11 @@ export class SettingsRow extends UIComponent {
         this.restore.on('pointerout', () => tween(this.restore, { scaleX: 1 }, { duration: 200 }));
         this.addChild(this.restore, control);
         if (this.desc) this.addChild(this.desc);
+        if (opts.disabled) {
+            // Greyed out; nothing in the row (control, restore pill) takes clicks.
+            this.alpha = 0.45;
+            this.interactiveChildren = false;
+        }
         if (bindable) this.disposer.add(bindable.changed.add(() => this.updateRestore()));
         if (this.visibleWhen) this.disposer.add(this.visibleWhen.bind(() => this.onLayoutChange?.()));
         this.updateRestore(true);

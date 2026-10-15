@@ -2,6 +2,7 @@ import type { Game } from '../../app/Game';
 import { Colors } from '../../ui/theme';
 import { buttonRow, textRow } from './rows';
 import type { SectionDef } from './types';
+import { isDesktop } from '../../native/desktop';
 
 function formatBytes(n: number): string {
     if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
@@ -38,7 +39,7 @@ export function maintenanceSection(game: Game): SectionDef {
         }
         const ok = await game.dialog.confirm({
             title: 'Delete all beatmaps?',
-            text: `This removes all ${n} beatmap sets stored in this browser. Scores are kept.`,
+            text: `This removes all ${n} beatmap sets stored ${isDesktop ? 'in wosu!' : 'in this browser'}. Scores are kept.`,
             confirmText: 'Delete everything',
             danger: true,
         });

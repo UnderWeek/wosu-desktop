@@ -23,11 +23,16 @@ class DesktopSettings {
     /** vsync as the running process was started with. */
     readonly launchedWithVsync: boolean;
     readonly restartRequired = new Bindable(false);
+    /** 'darwin' | 'win32' | 'linux'. */
+    readonly platform: string;
+    readonly host: 'sdl' | 'electron';
     /** The fullscreen kind F11 switches to (the last one picked). */
     private lastFullscreen: Exclude<DisplayMode, 'windowed'> = 'borderless';
 
     constructor(private readonly native: WosuNative) {
         const c = native.config.initial;
+        this.platform = native.platform;
+        this.host = native.host ?? 'electron';
         this.displayMode = new Bindable<DisplayMode>(c.displayMode);
         this.vsync = new Bindable(c.vsync);
         this.hidpi = new Bindable(c.hidpi);

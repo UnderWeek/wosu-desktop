@@ -60,13 +60,20 @@ export function graphicsSection(game: Game): SectionDef {
 function desktopRows(): SettingsRow[] {
     const d = desktopSettings;
     if (!d) return [];
+    const modes: Record<string, [string, string]> = {
+        darwin: ['Borderless fullscreen', 'Fullscreen (own Space)'],
+        win32: ['Borderless', 'Exclusive Fullscreen'],
+        linux: ['Borderless', 'Fullscreen'],
+    };
+    const [borderless, fullscreen] = modes[d.platform] ?? modes.linux;
     return [
         dropdownRow<DisplayMode>('Display mode', [
-            { value: 'windowed', label: 'Windowed' },
-            { value: 'borderless', label: 'Borderless fullscreen' },
-            { value: 'fullscreen', label: 'Fullscreen (own Space)' },
-        ], d.displayMode, { keywords: 'fullscreen window borderless screen', description: 'F11 or Alt+Enter switches between windowed and the last fullscreen mode.' }),
-        checkboxRow('Retina resolution', d.hidpi, { keywords: 'retina hidpi dpi resolution sharp performance', description: 'Off: renders at 1 pixel per point and lets macOS upscale (like osu!lazer). Much faster on Retina screens, slightly softer image.' }),
+            { value: 'windowed', label: d.platform === 'darwin' ? 'Windowed' : 'Window' },
+            { value: 'borderless', label: borderless },
+            { value: 'fullscreen', label: fullscreen },
+        ], d.displayMode, { keywords: 'fullscreen window borderless screen exclusive', description: 'F11 or Alt+Enter switches between windowed and the last fullscreen mode.' }),
+        // Retina is a macOS thing.
+        ...(d.platform === 'darwin' ? [checkboxRow('Retina resolution', d.hidpi, { keywords: 'retina hidpi dpi resolution sharp performance', description: 'Off: renders at 1 pixel per point and lets macOS upscale (like osu!lazer). Much faster on Retina screens, slightly softer image.' })] : []),
         checkboxRow('VSync', d.vsync, { keywords: 'vsync tearing fps framerate unlimited', description: 'Off: frames are not tied to the display refresh rate (lowest input latency; use the frame limiter to cap). Requires a restart.' }),
         noticeRow('VSync changes apply after restarting the app.', Colors.yellow, 'warning', {
             visibleWhen: d.restartRequired,

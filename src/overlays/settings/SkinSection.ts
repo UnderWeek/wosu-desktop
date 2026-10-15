@@ -4,6 +4,7 @@ import { Dropdown, type DropdownItem } from '../../ui/Dropdown';
 import { Colors } from '../../ui/theme';
 import { buttonRow, checkboxRow, dropdownRow, mult, sliderRow, textRow, type SettingsRow } from './rows';
 import type { SectionDef } from './types';
+import { isDesktop } from '../../native/desktop';
 
 /** Dropdown entry that picks a random skin (lazer's "<Random skin>"). */
 const RANDOM = '\u0000random';
@@ -75,7 +76,7 @@ export function skinSection(game: Game): SectionDef {
         if (!info) return;
         void game.dialog.confirm({
             title: 'Delete skin?',
-            text: `Are you sure you want to delete "${info.name}"? It is removed from this browser.`,
+            text: `Are you sure you want to delete "${info.name}"? It is removed from ${isDesktop ? 'wosu!' : 'this browser'}.`,
             confirmText: 'Yes. Totally. Delete it.',
             danger: true,
             icon: 'trash',
