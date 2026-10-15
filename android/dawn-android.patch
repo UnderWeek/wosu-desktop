@@ -1,0 +1,492 @@
+diff --git a/DEPS b/DEPS
+index bd9d4a5f6..5bc659e9a 100644
+--- a/DEPS
++++ b/DEPS
+@@ -52,9 +52,9 @@ vars = {
+   # different from the project used in 'rbe_instance'
+   'rewrapper_cfg_project': '',
+   # reclient CIPD package
+-  'reclient_package': 'infra/rbe/client/',
++  # 'reclient_package': 'infra/rbe/client/',
+   # reclient CIPD package version
+-  'reclient_version': 're_client_version:0.185.0.db415f21-gomaip',
++  # 'reclient_version': 're_client_version:0.185.0.db415f21-gomaip',
+   # siso CIPD package version.
+   'siso_version': 'git_revision:bc45e8f67ae0f37d337190ad64aa8bb440c791eb',
+ 
+@@ -667,17 +667,17 @@ deps = {
+     'dep_type': 'cipd',
+   },
+ 
+-  # RBE dependencies
+-  'buildtools/reclient': {
+-    'packages': [
+-      {
+-        'package': Var('reclient_package') + '${{platform}}',
+-        'version': Var('reclient_version'),
+-      }
+-    ],
+-    'condition': 'dawn_standalone and (host_cpu != "arm64" or host_os == "mac") and non_git_source',
+-    'dep_type': 'cipd',
+-  },
++  # # RBE dependencies
++  # 'buildtools/reclient': {
++  #   'packages': [
++  #     {
++  #       'package': Var('reclient_package') + '${{platform}}',
++  #       'version': Var('reclient_version'),
++  #     }
++  #   ],
++  #   'condition': 'dawn_standalone and (host_cpu != "arm64" or host_os == "mac") and non_git_source',
++  #   'dep_type': 'cipd',
++  # },
+ 
+   # Misc dependencies inherited from Tint
+   'third_party/protobuf': {
+@@ -999,53 +999,53 @@ hooks = [
+   },
+ 
+   # Configure remote exec cfg files
+-  {
+-    # Use luci_auth if on windows and using chrome-untrusted project
+-    'name': 'download_and_configure_reclient_cfgs',
+-    'pattern': '.',
+-    'condition': 'dawn_standalone and download_remoteexec_cfg and host_os == "win"',
+-    'action': ['vpython3',
+-               'buildtools/reclient_cfgs/configure_reclient_cfgs.py',
+-               '--rbe_instance',
+-               Var('rbe_instance'),
+-               '--reproxy_cfg_template',
+-               'reproxy.cfg.template',
+-               '--rewrapper_cfg_project',
+-               Var('rewrapper_cfg_project'),
+-               '--use_luci_auth_credshelper',
+-               '--quiet',
+-               ],
+-  },  {
+-    'name': 'download_and_configure_reclient_cfgs',
+-    'pattern': '.',
+-    'condition': 'dawn_standalone and download_remoteexec_cfg and not host_os == "win"',
+-    'action': ['vpython3',
+-               'buildtools/reclient_cfgs/configure_reclient_cfgs.py',
+-               '--rbe_instance',
+-               Var('rbe_instance'),
+-               '--reproxy_cfg_template',
+-               'reproxy.cfg.template',
+-               '--rewrapper_cfg_project',
+-               Var('rewrapper_cfg_project'),
+-               '--quiet',
+-               ],
+-  },
+-  {
+-    'name': 'configure_reclient_cfgs',
+-    'pattern': '.',
+-    'condition': 'dawn_standalone and not download_remoteexec_cfg',
+-    'action': ['vpython3',
+-               'buildtools/reclient_cfgs/configure_reclient_cfgs.py',
+-               '--rbe_instance',
+-               Var('rbe_instance'),
+-               '--reproxy_cfg_template',
+-               'reproxy.cfg.template',
+-               '--rewrapper_cfg_project',
+-               Var('rewrapper_cfg_project'),
+-               '--skip_remoteexec_cfg_fetch',
+-               '--quiet',
+-               ],
+-  },
++  # {
++  #   # Use luci_auth if on windows and using chrome-untrusted project
++  #   'name': 'download_and_configure_reclient_cfgs',
++  #   'pattern': '.',
++  #   'condition': 'dawn_standalone and download_remoteexec_cfg and host_os == "win"',
++  #   'action': ['vpython3',
++  #              'buildtools/reclient_cfgs/configure_reclient_cfgs.py',
++  #              '--rbe_instance',
++  #              Var('rbe_instance'),
++  #              '--reproxy_cfg_template',
++  #              'reproxy.cfg.template',
++  #              '--rewrapper_cfg_project',
++  #              Var('rewrapper_cfg_project'),
++  #              '--use_luci_auth_credshelper',
++  #              '--quiet',
++  #              ],
++  # },  {
++  #   'name': 'download_and_configure_reclient_cfgs',
++  #   'pattern': '.',
++  #   'condition': 'dawn_standalone and download_remoteexec_cfg and not host_os == "win"',
++  #   'action': ['vpython3',
++  #              'buildtools/reclient_cfgs/configure_reclient_cfgs.py',
++  #              '--rbe_instance',
++  #              Var('rbe_instance'),
++  #              '--reproxy_cfg_template',
++  #              'reproxy.cfg.template',
++  #              '--rewrapper_cfg_project',
++  #              Var('rewrapper_cfg_project'),
++  #              '--quiet',
++  #              ],
++  # },
++  # {
++  #   'name': 'configure_reclient_cfgs',
++  #   'pattern': '.',
++  #   'condition': 'dawn_standalone and not download_remoteexec_cfg',
++  #   'action': ['vpython3',
++  #              'buildtools/reclient_cfgs/configure_reclient_cfgs.py',
++  #              '--rbe_instance',
++  #              Var('rbe_instance'),
++  #              '--reproxy_cfg_template',
++  #              'reproxy.cfg.template',
++  #              '--rewrapper_cfg_project',
++  #              Var('rewrapper_cfg_project'),
++  #              '--skip_remoteexec_cfg_fetch',
++  #              '--quiet',
++  #              ],
++  # },
+   # Configure Siso for developer builds.
+   {
+     'name': 'configure_siso',
+diff --git a/src/dawn/CMakeLists.txt b/src/dawn/CMakeLists.txt
+index 6bb88aa74..1e78d217c 100644
+--- a/src/dawn/CMakeLists.txt
++++ b/src/dawn/CMakeLists.txt
+@@ -199,6 +199,8 @@ if (DAWN_BUILD_NODE_BINDINGS)
+   add_subdirectory(node)
+ endif()
+ 
++add_subdirectory(sdl)
++
+ ###############################################################################
+ # libdawn_proc
+ #   Only built when not building for Emscripten
+diff --git a/src/dawn/node/CMakeLists.txt b/src/dawn/node/CMakeLists.txt
+index f28474bfa..cb98a384e 100644
+--- a/src/dawn/node/CMakeLists.txt
++++ b/src/dawn/node/CMakeLists.txt
+@@ -113,6 +113,7 @@ target_link_libraries(dawn_node
+         dawn_proc
+         dawn_warnings_config
+         libtint
++        dawn_sdl
+ )
+ target_include_directories(dawn_node
+     PRIVATE
+diff --git a/src/dawn/node/Module.cpp b/src/dawn/node/Module.cpp
+index cb70833c7..dfa40e93b 100644
+--- a/src/dawn/node/Module.cpp
++++ b/src/dawn/node/Module.cpp
+@@ -30,10 +30,17 @@
+ #include <tuple>
+ #include <utility>
+ #include <vector>
++#include <map>
+ 
+ #include "dawn/dawn_proc.h"
+ #include "src/dawn/node/binding/Flags.h"
+ #include "src/dawn/node/binding/GPU.h"
++#include "src/dawn/node/binding/GPUDevice.h"
++#include "src/dawn/node/binding/GPUTexture.h"
++#include "src/dawn/node/binding/GPUTextureView.h"
++#include "src/dawn/node/binding/Converter.h"
++
++#include "webgpu/webgpu_sdl.h"
+ 
+ #ifdef DAWN_EMIT_COVERAGE
+ extern "C" {
+@@ -43,10 +50,21 @@ int __llvm_profile_write_file(void);
+ }
+ #endif  // DAWN_EMIT_COVERAGE
+ 
++const DawnProcTable *procs;
++
++Napi::FunctionReference constructor;
++
++std::map<std::string, WGPUPresentMode> wgpuPresentModes = {
++    { "fifo", WGPUPresentMode_Fifo },
++    { "fifoRelaxed", WGPUPresentMode_FifoRelaxed },
++    { "immediate", WGPUPresentMode_Immediate },
++    { "mailbox", WGPUPresentMode_Mailbox }
++};
++
+ namespace {
+ 
+ Napi::Value CreateGPU(const Napi::CallbackInfo& info) {
+-    const auto& env = info.Env();
++    const Napi::Env& env = info.Env();
+ 
+     std::tuple<std::vector<std::string>> args;
+     if (auto res = wgpu::interop::FromJS(info, args); !res) {
+@@ -68,7 +86,192 @@ Napi::Value CreateGPU(const Napi::CallbackInfo& info) {
+     }
+ 
+     // Construct a wgpu::interop::GPU interface, implemented by wgpu::bindings::GPU.
+-    return wgpu::interop::GPU::Create<wgpu::binding::GPU>(env, std::move(flags));
++    auto gpu = wgpu::interop::GPU::Create<wgpu::binding::GPU>(env, std::move(flags));
++    Napi::Object jsGpu = gpu;
++
++    return jsGpu;
++}
++
++class Renderer : public Napi::ObjectWrap<Renderer> {
++
++public:
++
++    static void Init(const Napi::Env &env) {
++        Napi::Function func = DefineClass(env, "Renderer", {
++            InstanceMethod("getPreferredFormat", &Renderer::getPreferredFormat),
++            InstanceMethod("getCurrentTexture", &Renderer::getCurrentTexture),
++            InstanceMethod("getCurrentTextureView", &Renderer::getCurrentTextureView),
++            InstanceMethod("swap", &Renderer::swap),
++            InstanceMethod("resize", &Renderer::resize),
++            InstanceMethod("release", &Renderer::release),
++        });
++
++        constructor = Napi::Persistent(func);
++        constructor.SuppressDestruct();
++    }
++
++    Renderer(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Renderer>(info) {
++        const Napi::Env& env = info.Env();
++
++        Napi::Object jsDevice = info[0].As<Napi::Object>();
++        _device = Napi::Persistent(jsDevice);
++
++        Napi::Object jsWindow = info[1].As<Napi::Object>();
++        _window = Napi::Persistent(jsWindow);
++
++        Napi::String jsPresentMode = info[2].As<Napi::String>();
++        _wgpuPresentMode = wgpuPresentModes[jsPresentMode.Utf8Value()];
++
++        _wgpuDevice = reinterpret_cast<wgpu::binding::GPUDevice*>(wgpu::interop::GPUDevice::Unwrap(_device.Value()))->device_.Get();
++        _wgpuAdapter = procs->deviceGetAdapter(_wgpuDevice);
++        _wgpuInstance = procs->adapterGetInstance(_wgpuAdapter);
++
++        _createSurface(env);
++    };
++
++    static Napi::Object NewInstance(Napi::Env env, Napi::Value device, Napi::Value window, Napi::Value presentMode) {
++        return constructor.New({ device, window, presentMode });
++    }
++
++    Napi::Value getPreferredFormat(const Napi::CallbackInfo& info) {
++        const Napi::Env& env = info.Env();
++
++        wgpu::interop::GPUTextureFormat format;
++        wgpu::binding::Converter convert(env);
++        bool success = convert(format, static_cast<wgpu::TextureFormat>(_wgpuPreferredFormat));
++        return success ? wgpu::interop::ToJS(env, format) : env.Null();
++    }
++
++    Napi::Value getCurrentTexture(const Napi::CallbackInfo& info) {
++        const Napi::Env& env = info.Env();
++
++        WGPUSurfaceTexture wgpuSurfaceTexture = {};
++        procs->surfaceGetCurrentTexture(_wgpuSurface, &wgpuSurfaceTexture);
++
++        return wgpu::interop::GPUTexture::Create<wgpu::binding::GPUTexture>(env,
++            wgpu::Device(_wgpuDevice),
++            wgpu::TextureDescriptor(),
++            wgpu::Texture::Acquire(wgpuSurfaceTexture.texture)
++        );
++    }
++
++    Napi::Value getCurrentTextureView(const Napi::CallbackInfo& info) {
++        const Napi::Env& env = info.Env();
++
++        WGPUSurfaceTexture wgpuSurfaceTexture = {};
++        procs->surfaceGetCurrentTexture(_wgpuSurface, &wgpuSurfaceTexture);
++
++        WGPUTextureView wgpuTextureView = procs->textureCreateView(wgpuSurfaceTexture.texture, nullptr); procs->textureRelease(wgpuSurfaceTexture.texture);
++
++        return wgpu::interop::GPUTextureView::Create<wgpu::binding::GPUTextureView>(env,
++            wgpu::TextureViewDescriptor(),
++            wgpu::TextureView::Acquire(wgpuTextureView)
++        );
++    }
++
++    Napi::Value swap(const Napi::CallbackInfo& info) {
++        const Napi::Env& env = info.Env();
++        procs->surfacePresent(_wgpuSurface);
++        return env.Undefined();
++    }
++
++    Napi::Value resize(const Napi::CallbackInfo& info) {
++        const Napi::Env& env = info.Env();
++        _createSurface(env);
++        return env.Undefined();
++    }
++
++    /** Let go of the window's surface now (Android: before the window is destroyed). */
++    Napi::Value release(const Napi::CallbackInfo& info) {
++        _releaseSurface();
++        return info.Env().Undefined();
++    }
++
++    ~Renderer() { _releaseSurface(); }
++
++private:
++
++    Napi::ObjectReference _device;
++    Napi::ObjectReference _window;
++    WGPUPresentMode _wgpuPresentMode;
++    WGPUDevice _wgpuDevice;
++    WGPUAdapter _wgpuAdapter;
++    WGPUInstance _wgpuInstance;
++    WGPUSurface _wgpuSurface = nullptr;
++    WGPUTextureFormat _wgpuPreferredFormat;
++
++    void _releaseSurface() {
++        if (!_wgpuSurface) return;
++        procs->surfaceUnconfigure(_wgpuSurface);
++        procs->surfaceRelease(_wgpuSurface);
++        _wgpuSurface = nullptr;
++    }
++
++    void _createSurface(const Napi::Env &env) {
++        // One surface per window at a time (Vulkan refuses a second one on Android).
++        _releaseSurface();
++        Napi::Buffer<char> buffer = { env, _window.Get("_native").As<Napi::Object>().Get("gpu") };
++        _wgpuSurface = wgpu::sdl::CreateSurfaceForWindow(procs, _wgpuInstance, buffer.Data());
++
++        WGPUSurfaceCapabilities wgpuCapabilities = {};
++        procs->surfaceGetCapabilities(_wgpuSurface, _wgpuAdapter, &wgpuCapabilities);
++
++        _wgpuPreferredFormat = wgpuCapabilities.formats[0];
++
++        WGPUSurfaceConfiguration wgpuConfig = {};
++        wgpuConfig.device = _wgpuDevice;
++        wgpuConfig.format = _wgpuPreferredFormat;
++        wgpuConfig.usage = WGPUTextureUsage_RenderAttachment;
++        wgpuConfig.alphaMode = WGPUCompositeAlphaMode_Opaque;
++        wgpuConfig.width = _window.Get("_pixelWidth").ToNumber().Uint32Value();
++        wgpuConfig.height = _window.Get("_pixelHeight").ToNumber().Uint32Value();
++        wgpuConfig.presentMode = _wgpuPresentMode;
++        procs->surfaceConfigure(_wgpuSurface, &wgpuConfig);
++    }
++};
++
++Napi::Value RenderGPUDeviceToWindow(const Napi::CallbackInfo& info) {
++    const Napi::Env& env = info.Env();
++
++    if (info.Length() != 1) {
++        Napi::Error::New(env, "renderGPUDeviceToWindow expects exactly 1 argument").ThrowAsJavaScriptException();
++        return env.Undefined();
++    }
++    Napi::Value jsArg = info[0];
++
++    if (!jsArg.IsObject()) {
++        Napi::Error::New(env, "argument to renderGPUDeviceToWindow must be an object").ThrowAsJavaScriptException();
++        return env.Undefined();
++    }
++    Napi::Object jsObj = jsArg.ToObject();
++
++    Napi::Value jsDevice = jsObj.Get("device");
++    if (!jsDevice.IsObject()) {
++        Napi::Error::New(env, "device argument to renderGPUDeviceToWindow must be an object").ThrowAsJavaScriptException();
++        return env.Undefined();
++    }
++
++    Napi::Value jsWindow = jsObj.Get("window");
++    if (!jsWindow.IsObject()) {
++        Napi::Error::New(env, "window argument to renderGPUDeviceToWindow must be an object").ThrowAsJavaScriptException();
++        return env.Undefined();
++    }
++
++    Napi::Value jsPresentMode = jsObj.Get("presentMode");
++    if (jsPresentMode.IsUndefined()) {
++        jsPresentMode = Napi::String::New(env, "fifo");
++    } else if (!jsPresentMode.IsString()) {
++        Napi::Error::New(env, "presentMode argument to renderGPUDeviceToWindow must be a string").ThrowAsJavaScriptException();
++        return env.Undefined();
++    } else {
++        std::string presentModeStr = jsPresentMode.As<Napi::String>().Utf8Value();
++        if (wgpuPresentModes.find(presentModeStr) == wgpuPresentModes.end()) {
++            Napi::Error::New(env, "presentMode argument to renderGPUDeviceToWindow has invalid value").ThrowAsJavaScriptException();
++            return env.Undefined();
++        }
++    }
++
++    return Renderer::NewInstance(env, jsDevice, jsWindow, jsPresentMode);
+ }
+ 
+ #ifdef DAWN_EMIT_COVERAGE
+@@ -104,13 +307,18 @@ struct Coverage {
+ // object.
+ NAPI_MODULE_EXPORT Napi::Object Initialize(Napi::Env env, Napi::Object exports) {
+     // Set all the Dawn procedure function pointers.
+-    dawnProcSetProcs(&dawn::native::GetProcs());
++    procs = &dawn::native::GetProcs();
++    dawnProcSetProcs(procs);
+ 
+     // Register all the interop types
+     exports.Set(Napi::String::New(env, "globals"), wgpu::interop::Initialize(env));
+ 
+     // Export function that creates and returns the wgpu::interop::GPU interface
+-    exports.Set(Napi::String::New(env, "create"), Napi::Function::New<CreateGPU>(env));
++    exports.Set(Napi::String::New(env, "_create"), Napi::Function::New<CreateGPU>(env));
++
++    Renderer::Init(env);
++
++    exports.Set(Napi::String::New(env, "renderGPUDeviceToWindow"), Napi::Function::New<RenderGPUDeviceToWindow>(env));
+ 
+ #ifdef DAWN_EMIT_COVERAGE
+     Coverage* coverage = new Coverage();
+diff --git a/src/dawn/node/binding/AsyncRunner.cpp b/src/dawn/node/binding/AsyncRunner.cpp
+index 9c16028b5..8bd3575fa 100644
+--- a/src/dawn/node/binding/AsyncRunner.cpp
++++ b/src/dawn/node/binding/AsyncRunner.cpp
+@@ -66,7 +66,7 @@ void AsyncRunner::ScheduleProcessEvents(Napi::Env env) {
+ 
+     auto weak_self = weak_this_;
+     env.Global()
+-        .Get("setImmediate")
++        .Get("setTimeout")
+         .As<Napi::Function>()
+         .Call({
+             // TODO(crbug.com/dawn/1127): Create once, reuse.
+@@ -78,9 +78,15 @@ void AsyncRunner::ScheduleProcessEvents(Napi::Env env) {
+                                     }
+ 
+                                     self->process_events_queued_ = false;
++
++                                    if (self->tasks_waiting_ == 0) {
++                                        return ;
++                                    }
++
+                                     wgpuInstanceProcessEvents(self->instance_->Get());
+                                     self->ScheduleProcessEvents(env);
+                                 }),
++            Napi::Number::New(env, 100)
+         });
+ }
+ 
+diff --git a/src/dawn/node/binding/GPU.h b/src/dawn/node/binding/GPU.h
+index 9345441e9..1dbbf4bbd 100644
+--- a/src/dawn/node/binding/GPU.h
++++ b/src/dawn/node/binding/GPU.h
+@@ -51,9 +51,10 @@ class GPU final : public interop::GPU {
+     interop::GPUTextureFormat getPreferredCanvasFormat(Napi::Env) override;
+     interop::Interface<interop::WGSLLanguageFeatures> getWgslLanguageFeatures(Napi::Env) override;
+ 
++    std::unique_ptr<dawn::native::Instance> instance_;
++
+   private:
+     const Flags flags_;
+-    std::unique_ptr<dawn::native::Instance> instance_;
+     std::shared_ptr<AsyncRunner> async_;
+ };
+ 
+diff --git a/src/dawn/node/binding/GPUDevice.h b/src/dawn/node/binding/GPUDevice.h
+index 5e048d595..d401ca5b2 100644
+--- a/src/dawn/node/binding/GPUDevice.h
++++ b/src/dawn/node/binding/GPUDevice.h
+@@ -133,9 +133,10 @@ class GPUDevice final : public interop::GPUDevice, EventTarget {
+                                               ErrorType type,
+                                               wgpu::StringView message);
+ 
++    wgpu::Device device_;
++
+   private:
+     Napi::Env env_;
+-    wgpu::Device device_;
+     std::shared_ptr<AsyncRunner> async_;
+ 
+     // This promise's JS object lives as long as the device because it is stored in .lost

@@ -37,7 +37,7 @@ APP="$OUT/stage/assets/app"
 
 echo "== native"
 cp "$AB/libnode.so" "$LIBS/libnode.so"
-cp "$TC/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$LIBS/"
+cp "$AB/libc++_shared.so" "$LIBS/" # from NDK r30, which libnode.so was built with
 GLUE="$NDK/sources/android/native_app_glue"
 "$CC" -c -O2 -fPIC -I"$GLUE" "$GLUE/android_native_app_glue.c" -o "$OUT/obj/glue.o"
 "$CXX" -shared -fPIC -O2 -std=c++20 -Wall \
