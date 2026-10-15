@@ -47,7 +47,10 @@ export class DrawableHitCircle extends Container implements Drawable {
         const dt = time - s.judgedAt;
         this.approach.visible = false;
         if (s.result === 'miss') return this.piece.showMiss(dt, this.lastAlpha) || dt < 100;
-        return this.piece.showHit(dt);
+        const alive = this.piece.showHit(dt);
+        // Hidden: no hit animation, the circle is already gone (stable).
+        if (ctx.hidden && this.hiddenApplies) this.piece.visible = false;
+        return alive;
     }
 
     override destroy(): void {

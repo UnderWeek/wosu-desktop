@@ -567,7 +567,14 @@ export class MusicTrack {
             this.stretchConnected = true;
             // Transfer ownership into the worklet: cloning would keep a second
             // full copy of the song in memory.
-            await withTimeout(stretch.addBuffers(channels, transfer), timeout, 'Pitch-preserving audio buffer upload');
+            try {
+                await withTimeout(stretch.addBuffers(channels, transfer), timeout, 'Pitch-preserving audio buffer upload');
+            } catch (e) {
+                // node-web-audio-api (desktop host): decoded samples live in native memory and can't be transferred.
+                if ((e as { name?: string })?.name !== 'DataCloneError') throw e;
+                const copies = channels.map(ch => ch.slice());
+                await withTimeout(stretch.addBuffers(copies, copies.map(ch => ch.buffer as ArrayBuffer)), timeout, 'Pitch-preserving audio buffer upload');
+            }
             this.stretch = stretch;
             this.decoded = null;
         } catch (e) {

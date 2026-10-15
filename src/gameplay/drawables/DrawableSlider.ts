@@ -407,7 +407,11 @@ export class DrawableSlider extends Container implements Drawable {
         this.approach.visible = false;
         if (s.headHit) {
             if (time < s.headAt) this.head.showIdle(this.headAlpha);
-            else this.head.showHit(time - s.headAt);
+            else {
+                this.head.showHit(time - s.headAt);
+                // Hidden: no hit animation (stable).
+                if (this.hiddenOn) this.head.visible = false;
+            }
         } else {
             this.head.showMiss(time - (h.time + w50), this.headAlpha);
         }
