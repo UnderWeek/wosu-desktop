@@ -13,7 +13,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { PerformanceObserver } from 'node:perf_hooks';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { resolveObjectURL } from 'node:buffer';
 import { registerHooks } from 'node:module';
 import v8 from 'node:v8';
@@ -235,6 +236,48 @@ g.Worker = class WorkerShim extends EventTarget {
 // Web Audio
 for (const [k, v] of Object.entries(webAudio)) if (!(k in g)) g[k] = v;
 g.webkitAudioContext = g.AudioContext;
+
+/**
+ * Real output latency. node-web-audio-api reports ~5 ms, only part of its own buffer; what you
+ * hear is later by the device's latency plus CoreAudio's double-buffered I/O (~24 ms on wired
+ * headphones, ~35 ms on MacBook speakers, far more on Bluetooth). Chrome reports the full figure,
+ * so the game's clock compensates for it there; here a small CoreAudio helper (sdl/audio-latency.swift,
+ * compiled once into ~/.wosu/cache) measures it and follows device changes.
+ */
+let realOutputLatency = null;
+{
+    const outputLatency = Object.getOwnPropertyDescriptor(webAudio.AudioContext.prototype, 'outputLatency');
+    Object.defineProperty(webAudio.AudioContext.prototype, 'outputLatency', {
+        configurable: true,
+        get() {
+            return realOutputLatency ?? outputLatency?.get?.call(this) ?? 0;
+        },
+    });
+    if (process.platform === 'darwin') void (async () => {
+        const src = path.join(HERE, 'audio-latency.swift');
+        const hash = crypto.createHash('sha1').update(fs.readFileSync(src)).digest('hex').slice(0, 10);
+        const bin = path.join(os.homedir(), '.wosu', 'cache', `audio-latency-${hash}`);
+        if (!fs.existsSync(bin)) {
+            fs.mkdirSync(path.dirname(bin), { recursive: true });
+            await new Promise((resolve, reject) => execFile('/usr/bin/swiftc', ['-O', src, '-o', bin], err => (err ? reject(err) : resolve())));
+        }
+        const child = spawn(bin, [], { stdio: ['ignore', 'pipe', 'ignore'] });
+        child.unref();
+        child.stdout.unref?.();
+        process.on('exit', () => child.kill());
+        let buf = '';
+        child.stdout.on('data', chunk => {
+            buf += chunk;
+            for (let i; (i = buf.indexOf('\n')) >= 0; buf = buf.slice(i + 1)) {
+                try {
+                    const { ms, device } = JSON.parse(buf.slice(0, i));
+                    realOutputLatency = ms / 1000;
+                    console.log(`[audio] output latency ${ms.toFixed(1)} ms (${device})`);
+                } catch { /* partial line */ }
+            }
+        });
+    })().catch(e => console.warn('[audio] latency helper unavailable:', e.message));
+}
 
 // The worklet's worker thread has no wosu: loader: hand it the file in dist instead (DT/HT pitch stretch).
 {
