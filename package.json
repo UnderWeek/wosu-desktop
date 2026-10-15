@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "desktop": "npm run build && electron .",
-    "desktop:dev": "WOSU_DEV_URL=http://localhost:5173 electron .",
+    "desktop": "npm run build && node electron/dev-launch.cjs",
+    "desktop:dev": "WOSU_DEV_URL=http://localhost:5173 node electron/dev-launch.cjs",
     "dist:mac": "npm run build && electron-builder --mac zip dir --publish never"
   },
   "repository": {

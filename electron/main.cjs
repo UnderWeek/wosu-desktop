@@ -32,6 +32,9 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 // Before `ready`: the Chromium profile (localStorage, caches) lives in ~/.wosu too.
 app.setPath('userData', path.join(DATA_DIR, '.electron'));
 app.setName('wosu!');
+/** Run from source (npm start): wosu!'s icon instead of Electron's (packaged builds carry their own). */
+const DEV_ICON = path.join(__dirname, '..', 'build', 'icon.png');
+const devIcon = !app.isPackaged && fs.existsSync(DEV_ICON) ? DEV_ICON : undefined;
 
 // Rhythm game: render as fast as possible unless the player wants vsync
 // (Settings → Graphics; applies on restart). Frame pacing is then up to
@@ -91,6 +94,7 @@ function createWindow() {
         minHeight: 480,
         backgroundColor: '#000000',
         title: 'wosu!',
+        icon: devIcon,
         show: false,
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
@@ -253,6 +257,7 @@ if (!gotLock) {
     });
 
     app.whenReady().then(() => {
+        if (devIcon && process.platform === 'darwin') app.dock?.setIcon(devIcon);
         storage.registerIpc(ipcMain);
         void storage.migrateLegacy();
         inbox.registerIpc(ipcMain);

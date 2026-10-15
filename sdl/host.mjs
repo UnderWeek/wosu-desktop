@@ -29,6 +29,9 @@ import { createNative, relaunch } from './native.mjs';
 
 /** Android: the same host on libwosu.so's window and touch (android/sdl-shim.mjs). */
 const ANDROID = process.platform === 'android';
+// The app's name for the desktop (Linux WM_CLASS groups the taskbar entry; SDL's app name elsewhere).
+process.env.SDL_VIDEO_X11_WMCLASS ??= 'wosu';
+process.env.SDL_APP_NAME ??= 'wosu!';
 const sdl = ANDROID ? (await import('../android/sdl-shim.mjs')).default : (await import('@kmamal/sdl')).default;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -58,6 +61,20 @@ const PRESENT = process.env.PRESENT || (ANDROID ? 'mailbox' : 'immediate');
 // ---------------------------------------------------------------------------
 
 const win = sdl.video.createWindow({ title: 'wosu! (sdl)', width: 1280, height: 720, resizable: true, webgpu: true });
+// wosu!'s icon on the window: the taskbar on Windows/Linux, the Dock on macOS (start.mjs also wraps
+// the process in a wosu!.app there, for the Dock's name).
+if (!ANDROID) {
+    try {
+        const img = await loadImage(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'build', 'icon.png')));
+        const size = 256;
+        const c = createCanvas(size, size);
+        c.getContext('2d').drawImage(img, 0, 0, size, size);
+        const px = c.getContext('2d').getImageData(0, 0, size, size).data;
+        win.setIcon(size, size, size * 4, 'rgba32', Buffer.from(px.buffer, px.byteOffset, px.byteLength));
+    } catch (e) {
+        console.warn('[sdl] window icon:', e.message);
+    }
+}
 win.focus();
 const instance = gpu.create([]);
 /** Bound to the game's own device when it configures the canvas (see GPUCanvasContextShim). */
