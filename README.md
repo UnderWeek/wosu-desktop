@@ -10,7 +10,6 @@
 [![electron branch](https://img.shields.io/badge/branch-electron-47848f?style=for-the-badge&logo=electron&logoColor=white)](https://github.com/UnderWeek/wosu-desktop/tree/electron)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=for-the-badge&logo=typescript&logoColor=white)](src)
 [![WebGPU](https://img.shields.io/badge/WebGPU-Dawn%20%2F%20Metal-005a9c?style=for-the-badge)](sdl)
-[![Electron](https://img.shields.io/badge/Electron-47848f?style=for-the-badge&logo=electron&logoColor=white)](electron)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f?style=for-the-badge)](LICENSE)
 
 <img src="screenshots/gameplay.gif" width="760" alt="wosu! gameplay: YOASOBI - Yoru ni Kakeru (Keirelia's Insane) on Autoplay">
