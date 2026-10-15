@@ -9,6 +9,7 @@ import type { Storyboard } from '../../beatmap/storyboard';
 import type { LegacySkin } from '../../skin/LegacySkin';
 import type { SkinChain } from '../../skin/SkinChain';
 import type { BeatmapData, PlayableBeatmap, PlayableSlider } from '../../beatmap/types';
+import type { BindableNumber } from '../../core/Bindable';
 import { clamp01 } from '../../core/math';
 import { tween, tweener } from '../../core/Tweener';
 import { comboColor } from '../../gameplay/drawables/context';
@@ -56,6 +57,8 @@ export interface PlayerOptions {
     beatmapSkin?: LegacySkin | null;
     /** Watch this replay (lazer's ReplayPlayer) instead of playing; `mods` are the score's. */
     replay?: ReplayInfo | null;
+    /** This map's own offset; -/= nudge it during play like osu!'s local offset (Alt: 1 ms steps). */
+    beatmapOffset?: BindableNumber;
 }
 
 /** How a Player ended, read by the loader when it resumes. */
@@ -1170,6 +1173,12 @@ export class PlayerScreen extends Screen {
                 const on = this.hud.toggleLeaderboard();
                 this.game.notifications.info(`Gameplay leaderboard: ${on ? 'enabled' : 'disabled'}`);
             }
+            return true;
+        }
+        if ((e.code === 'Minus' || e.code === 'Equal') && this.options.beatmapOffset && !this.options.replay) {
+            const b = this.options.beatmapOffset;
+            b.value += (e.code === 'Equal' ? 1 : -1) * (e.altKey ? 1 : 5);
+            this.game.notifications.info(`Beatmap offset: ${b.value > 0 ? '+' : ''}${b.value} ms`);
             return true;
         }
         if (e.key === 'Control') {

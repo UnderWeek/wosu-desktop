@@ -4,7 +4,7 @@ import { Screen } from '../../app/Screen';
 import type { Selection } from '../../app/Game';
 import { MusicTrack } from '../../audio/MusicTrack';
 import type { BeatmapData } from '../../beatmap/types';
-import { Bindable } from '../../core/Bindable';
+import { Bindable, BindableNumber } from '../../core/Bindable';
 import { tween } from '../../core/Tweener';
 import { audioPitch, playbackRate, preservesPitch, sortedMods, withSettings, type ModSet } from '../../gameplay/mods';
 import type { ReplayInfo } from '../../gameplay/replay/Replay';
@@ -17,6 +17,7 @@ import { Slider } from '../../ui/Slider';
 import { fitText, label } from '../../ui/text';
 import { ColorProvider, Colors, starColor, starTextColor } from '../../ui/theme';
 import { UIComponent } from '../../ui/UIComponent';
+import { scoreKeyFor } from '../select/Leaderboard';
 import { modAdjustedStars } from '../select/modStars';
 import { coverFill, formatStars, setBackground } from '../select/visuals';
 import { parseStoryboard, type Storyboard } from '../../beatmap/storyboard';
@@ -76,6 +77,8 @@ export class PlayerLoaderScreen extends Screen {
     private retries = 0;
     /** Built and warmed up behind the loader; pushed once ready. */
     private player: PlayerScreen | null = null;
+    /** This map's own offset (on top of the global one), saved per beatmap; also adjustable in gameplay. */
+    readonly beatmapOffset = new BindableNumber(0, -300, 300, 1);
 
     /** `replay`: watch it (with its score's mods) instead of playing. */
     constructor(readonly selection: Selection, readonly replay: ReplayInfo | null = null) {
@@ -85,6 +88,9 @@ export class PlayerLoaderScreen extends Screen {
     override load(): void {
         const g = this.game;
         const { set, diff } = this.selection;
+        const offsetKey = scoreKeyFor(set, diff);
+        this.beatmapOffset.value = g.beatmapOffsets.get(offsetKey);
+        this.disposer.add(this.beatmapOffset.bind(v => g.beatmapOffsets.set(offsetKey, v)));
         this.mods = this.replay ? withSettings(this.replay.mods, this.replay.modSettings) : g.mods.value;
         if (g.settings.fullscreenOnPlay.value && desktopSettings) {
             // Desktop app: fullscreen the window (stays fullscreen afterwards, like the setting in osu!).
@@ -189,10 +195,14 @@ export class PlayerLoaderScreen extends Screen {
             track.pause();
             await track.setRate(playbackRate(this.mods), preservesPitch(this.mods), audioPitch(this.mods));
             if (this.cancelled) return this.handBackTrack();
-            track.userOffsetMs = g.settings.audioOffset.value;
-            this.disposer.add(g.settings.audioOffset.bind(v => {
-                if (this.track) this.track.userOffsetMs = v;
-            }));
+            // osu! plays maps older than format v5 24 ms later (lazer's LegacyBeatmapDecoder EarlyVersionTimingOffset).
+            const legacyOffset = data.formatVersion < 5 ? 24 : 0;
+            const applyOffset = () => {
+                if (this.track) this.track.userOffsetMs = g.settings.audioOffset.value + this.beatmapOffset.value + legacyOffset;
+            };
+            applyOffset();
+            this.disposer.add(g.settings.audioOffset.bind(applyOffset));
+            this.disposer.add(this.beatmapOffset.bind(applyOffset));
             this.storyboard = await this.readStoryboard(archive, diff.file);
             if (this.cancelled) return this.handBackTrack();
             // The map's own skin elements and hitsounds (both toggled in the visual/audio settings).
@@ -345,6 +355,7 @@ export class PlayerLoaderScreen extends Screen {
             storyboard: this.storyboard,
             beatmapSkin: this.beatmapSkin,
             replay: this.replay,
+            beatmapOffset: this.beatmapOffset,
         });
         try {
             player.prepare(this.game, this._w, this._h);
@@ -462,6 +473,7 @@ class SettingsPanel extends UIComponent {
         super();
         const s = loader.game.settings;
         const pct = (v: number) => `${Math.round(v * 100)}%`;
+        const ms = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)} ms`;
         const slider = (caption: string, b: typeof s.backgroundDim, format: (v: number) => string) => {
             const sl = new Slider(caption, b, { format });
             this.sliders.push(sl);
@@ -487,7 +499,8 @@ class SettingsPanel extends UIComponent {
                 title: 'Audio settings',
                 rows: [
                     new Checkbox('Beatmap hitsounds', s.beatmapHitsounds),
-                    slider('Audio offset', s.audioOffset, v => `${v > 0 ? '+' : ''}${Math.round(v)} ms`),
+                    slider('Audio offset', s.audioOffset, ms),
+                    slider('Beatmap offset', loader.beatmapOffset, ms),
                 ],
             },
             {

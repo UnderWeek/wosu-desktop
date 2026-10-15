@@ -41,6 +41,7 @@ import { GameSettings } from '../settings/Settings';
 import { Skin } from '../skin/Skin';
 import { SkinManager } from '../skin/SkinManager';
 import { Favourites } from '../storage/Favourites';
+import { BeatmapOffsets } from '../storage/BeatmapOffsets';
 import { KnownVideos } from '../storage/KnownVideos';
 import { ScoreStore, type ScoreRecord } from '../storage/ScoreStore';
 import { Dropdown } from '../ui/Dropdown';
@@ -75,6 +76,7 @@ export class Game {
     readonly library = new BeatmapLibrary();
     readonly scores = new ScoreStore();
     readonly favourites = new Favourites();
+    readonly beatmapOffsets = new BeatmapOffsets();
     readonly knownVideos = new KnownVideos();
     readonly api: BeatmapApi;
     readonly downloads: DownloadManager;
@@ -221,6 +223,7 @@ export class Game {
             this.library.init().catch(e => console.error('library init failed', e)),
             this.scores.init().catch(e => console.error('score store init failed', e)),
             this.favourites.init().catch(e => console.error('favourites init failed', e)),
+            this.beatmapOffsets.init().catch(e => console.error('beatmap offsets init failed', e)),
             this.knownVideos.init().catch(e => console.error('video registry init failed', e)),
         ]);
         // Imported skins and the selected one load in the background (applies from the next play).

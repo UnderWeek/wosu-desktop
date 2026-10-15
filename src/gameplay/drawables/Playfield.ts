@@ -62,7 +62,8 @@ export class Playfield extends Container {
             approachLayer: this.approachLayer,
             radius: d.circleRadius,
             preempt: d.preempt,
-            fadeIn: d.fadeIn,
+            // Hidden fades objects in over 40% of the approach (then out over the next 30%), like stable/lazer.
+            fadeIn: o.hidden ? d.preempt * 0.4 : d.fadeIn,
             hidden: o.hidden,
             hideNumbers: o.hideNumbers,
             snakingIn: o.snakingIn,
