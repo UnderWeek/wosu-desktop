@@ -1041,8 +1041,8 @@ g.wosuNative = createNative({ onConfigChange: c => applyDisplayMode(c.displayMod
 /**
  * Songs decode with osu!lazer's BASS when lazer is installed (sdl/bass-decode.c): song time 0
  * then sits exactly where lazer and stable put it on every file (BASS trims MP3 delays its own
- * way; untagged files differ by 11-22 ms from other decoders). The result is resampled to the
- * context rate. Without lazer the game decodes as before.
+ * way; untagged files differ by 11-22 ms from other decoders). Without lazer the game decodes
+ * as before.
  */
 const LIBBASS = ['/Applications/osu!.app/Contents/MacOS/libbass.dylib', path.join(os.homedir(), 'Applications/osu!.app/Contents/MacOS/libbass.dylib')].find(f => fs.existsSync(f));
 let bassDecoder = null;
@@ -1061,36 +1061,45 @@ function bassDecoderPath() {
 }
 if (LIBBASS && process.platform === 'darwin') {
     void bassDecoderPath().catch(e => console.warn('[audio] BASS decoder unavailable:', e.message));
+    let decodeSeq = 0;
     g.wosuNative.decodeSong = async (bytes, context) => {
         const bin = await bassDecoderPath();
-        const out = await new Promise((resolve, reject) => {
-            const child = spawn(bin, [LIBBASS], { stdio: ['pipe', 'pipe', 'pipe'] });
-            const chunks = [];
-            let err = '';
-            child.stdout.on('data', c => chunks.push(c));
-            child.stderr.on('data', c => (err += c));
-            child.on('error', reject);
-            child.on('close', code => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(err.trim() || `bass-decode exited ${code}`))));
-            child.stdin.on('error', () => {});
-            child.stdin.end(Buffer.from(bytes));
-        });
-        const nl = out.indexOf(10);
-        const [rate, chans, frames] = out.subarray(0, nl).toString().split(' ').map(Number);
-        const pcm = new Float32Array(out.buffer.slice(out.byteOffset + nl + 1, out.byteOffset + nl + 1 + frames * chans * 4));
-        const src = context.createBuffer(chans, Math.max(1, frames), rate);
-        for (let c = 0; c < chans; c++) {
-            const ch = new Float32Array(frames);
-            for (let i = 0; i < frames; i++) ch[i] = pcm[i * chans + c];
-            src.copyToChannel(ch, c);
+        const file = path.join(os.tmpdir(), `wosu-song-${process.pid}-${++decodeSeq}.f32`);
+        let header, data;
+        try {
+            header = await new Promise((resolve, reject) => {
+                const child = spawn(bin, [LIBBASS, file], { stdio: ['pipe', 'pipe', 'pipe'] });
+                let out = '', err = '';
+                child.stdout.on('data', c => (out += c));
+                child.stderr.on('data', c => (err += c));
+                child.on('error', reject);
+                child.on('close', code => (code === 0 ? resolve(out) : reject(new Error(err.trim() || `bass-decode exited ${code}`))));
+                child.stdin.on('error', () => {});
+                child.stdin.end(Buffer.from(bytes));
+            });
+            // One read: readFile's chunked reads each wait for a turn of the (busy) event loop.
+            const fh = await fs.promises.open(file, 'r');
+            try {
+                const { size } = await fh.stat();
+                data = Buffer.allocUnsafe(size);
+                for (let at = 0; at < size;) {
+                    const { bytesRead } = await fh.read(data, at, size - at, at);
+                    if (!bytesRead) break;
+                    at += bytesRead;
+                }
+            } finally {
+                await fh.close();
+            }
+        } finally {
+            fs.promises.rm(file, { force: true }).catch(() => {});
         }
-        if (rate === context.sampleRate) return src;
-        // Resample to the context rate (the stretch worklet assumes it), delay-free.
-        const off = new webAudio.OfflineAudioContext(chans, Math.ceil((frames * context.sampleRate) / rate), context.sampleRate);
-        const node = off.createBufferSource();
-        node.buffer = src;
-        node.connect(off.destination);
-        node.start(0);
-        return off.startRendering();
+        const [rate, chans, frames] = header.trim().split(' ').map(Number);
+        const planes = new Float32Array(data.buffer, data.byteOffset, Math.min(data.byteLength >> 2, frames * chans));
+        const src = context.createBuffer(chans, Math.max(1, frames), rate);
+        for (let c = 0; c < chans; c++) src.copyToChannel(planes.subarray(c * frames, (c + 1) * frames), c);
+        // At the file's rate: buffer sources resample as they play (no offset); the DT/HT
+        // stretch worklet, which needs the context rate, gets its own copy (MusicTrack).
+        return src;
     };
     console.log('[audio] songs decode with osu!lazer\'s BASS:', LIBBASS);
 }

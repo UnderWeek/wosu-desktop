@@ -72,6 +72,16 @@ function releaseStretchNode(node: StretchNode | null | undefined): void {
     try { node.port.close(); } catch { /* ignore */ }
 }
 
+/** `buffer` at `rate`, rendered offline (delay-free). */
+async function resample(buffer: AudioBuffer, rate: number): Promise<AudioBuffer> {
+    const off = new OfflineAudioContext(buffer.numberOfChannels, Math.max(1, Math.ceil(buffer.duration * rate)), rate);
+    const src = off.createBufferSource();
+    src.buffer = buffer;
+    src.connect(off.destination);
+    src.start(0);
+    return off.startRendering();
+}
+
 let stretchModule: Promise<StretchFactory> | null = null;
 
 /**
@@ -545,9 +555,18 @@ export class MusicTrack {
             this.reportPitchFallback('AudioWorklet is unavailable');
             return;
         }
-        const decoded = this.decoded;
+        let decoded = this.decoded;
         if (!decoded) return;
         const timeout = MusicTrack.pitchStretchTimeoutMs;
+        // The worklet plays samples at the context rate (songs decoded at their own rate need a copy).
+        if (decoded.sampleRate !== ctx.sampleRate && typeof OfflineAudioContext !== 'undefined') {
+            try {
+                decoded = await resample(decoded, ctx.sampleRate);
+            } catch (e) {
+                this.reportPitchFallback(e);
+                return;
+            }
+        }
         let stretch: StretchNode | null = null;
         try {
             const factory = await withTimeout(MusicTrack.loadStretch(), timeout, 'Pitch-preserving audio module load');

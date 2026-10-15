@@ -3,7 +3,9 @@
 // (and stable, whose maps are timed against BASS) puts it: BASS drops the MP3
 // encoder/decoder delay its own way, which no other decoder matches on every file.
 //
-//   bass-decode <libbass.dylib>  < song bytes  > "rate channels frames\n" + float32 interleaved
+//   bass-decode <libbass.dylib> <out.f32>  < song bytes
+//   writes the samples (at the file's own rate) to out.f32 as planar float32 (channel 0,
+//   then 1, ...) and prints "rate channels frames".
 //
 // Used by sdl/host.mjs (compiled once into ~/.wosu/cache).
 #include <dlfcn.h>
@@ -24,7 +26,7 @@ typedef struct { DWORD freq, chans, flags, ctype, origres, plugin, sample; const
 #define BASS_POS_BYTE 0
 
 int main(int argc, char **argv) {
-    if (argc < 2) return 64;
+    if (argc < 3) return 64;
     void *lib = dlopen(argv[1], RTLD_NOW);
     if (!lib) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 1; }
     BOOL (*Init)(int, DWORD, DWORD, void *, void *) = dlsym(lib, "BASS_Init");
@@ -48,25 +50,24 @@ int main(int argc, char **argv) {
     if (!stream) { fprintf(stderr, "BASS_StreamCreateFile failed (%d)\n", ErrorCode ? ErrorCode() : -1); return 2; }
     ChannelInfo info;
     GetInfo(stream, &info);
-    QWORD bytes = GetLength(stream, BASS_POS_BYTE);
-    QWORD frames = bytes / (4 * (QWORD)info.chans);
-    printf("%u %u %llu\n", info.freq, info.chans, (unsigned long long)frames);
-
-    static float buf[65536];
-    QWORD written = 0, want = frames * info.chans * 4;
-    while (written < want) {
-        DWORD n = GetData(stream, buf, sizeof buf | BASS_DATA_FLOAT);
+    QWORD frames = GetLength(stream, BASS_POS_BYTE) / (4 * (QWORD)info.chans);
+    size_t total = (size_t)frames * info.chans;
+    float *pcm = calloc(total ? total : 1, sizeof(float));
+    size_t got = 0;
+    while (got < total) {
+        DWORD want = (DWORD)((total - got) * 4 > (1 << 20) ? (1 << 20) : (total - got) * 4);
+        DWORD n = GetData(stream, pcm + got, want | BASS_DATA_FLOAT);
         if (n == (DWORD)-1 || n == 0) break;
-        if (written + n > want) n = (DWORD)(want - written);
-        fwrite(buf, 1, n, stdout);
-        written += n;
+        got += n / 4;
     }
-    // Pad if BASS delivered less than it announced.
-    memset(buf, 0, sizeof buf);
-    while (written < want) {
-        QWORD n = want - written < sizeof buf ? want - written : sizeof buf;
-        fwrite(buf, 1, n, stdout);
-        written += n;
-    }
+    // De-interleave into channel planes.
+    float *planar = malloc((total ? total : 1) * sizeof(float));
+    for (QWORD i = 0; i < frames; i++)
+        for (DWORD c = 0; c < info.chans; c++) planar[c * frames + i] = pcm[i * info.chans + c];
+    FILE *out = fopen(argv[2], "wb");
+    if (!out) { fprintf(stderr, "cannot write %s\n", argv[2]); return 3; }
+    fwrite(planar, sizeof(float), total, out);
+    fclose(out);
+    printf("%u %u %llu\n", info.freq, info.chans, (unsigned long long)frames);
     return 0;
 }
