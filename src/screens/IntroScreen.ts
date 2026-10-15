@@ -2,6 +2,7 @@ import { Rectangle, Texture, type Text } from 'pixi.js';
 import { Screen } from '../app/Screen';
 import { tween, delay } from '../core/Tweener';
 import type { Action } from '../input/bindings';
+import { isDesktop } from '../native/desktop';
 import { label } from '../ui/text';
 import { Colors } from '../ui/theme';
 import { MainMenuScreen } from './MainMenuScreen';
@@ -81,6 +82,11 @@ export class IntroScreen extends Screen {
         this.alpha = 0;
         this.fadeIn(800);
         this.showWaiting();
+        // The desktop app needs no click to unlock audio: go straight into the welcome sequence.
+        if (isDesktop) {
+            this.hint.visible = false;
+            this.begin();
+        }
     }
 
     private showWaiting(): void {
